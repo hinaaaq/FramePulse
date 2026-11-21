@@ -68,6 +68,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
+import rikka.shizuku.ShizukuProvider
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -83,10 +84,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
+        if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+            Shizuku.requestPermission(100)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Prefs.init(this)
+        Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
         Shizuku.addRequestPermissionResultListener(shizukuListener)
+        try {
+            ShizukuProvider.requestBinderForNonProviderProcess(this)
+        } catch (_: Throwable) {}
 
         setContent {
             MaterialTheme(
@@ -110,6 +121,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        Shizuku.removeBinderReceivedListener(binderReceivedListener)
         Shizuku.removeRequestPermissionResultListener(shizukuListener)
         super.onDestroy()
     }
@@ -120,6 +132,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    var isAppForeground by remember { mutableStateOf(true) }
     var selectedTab by remember { mutableIntStateOf(0) }
     var telemetry by remember { mutableStateOf(TelemetryHub.latest) }
     var fpsHistory by remember { mutableStateOf<List<Int>>(emptyList()) }
@@ -166,13 +179,28 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
     val localMonitor = remember { SystemMonitor(context) }
 
     DisposableEffect(lifecycleOwner) {
-        localMonitor.start()
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                overlayGranted = Settings.canDrawOverlays(context)
-                serviceRunning = OverlayService.isRunning
-                touchLocked = OverlayService.isTouchLocked
-                shizukuConnected = localMonitor.isShizukuReady()
+            when (event) {
+                Lifecycle.Event.ON_START -> {
+                    isAppForeground = true
+                    TelemetryHub.isAppForeground = true
+                    if (!OverlayService.isRunning) localMonitor.start()
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    isAppForeground = true
+                    TelemetryHub.isAppForeground = true
+                    overlayGranted = Settings.canDrawOverlays(context)
+                    serviceRunning = OverlayService.isRunning
+                    touchLocked = OverlayService.isTouchLocked
+                    shizukuConnected = localMonitor.isShizukuReady()
+                    if (OverlayService.isRunning) localMonitor.stop() else localMonitor.start()
+                }
+                Lifecycle.Event.ON_STOP -> {
+                    isAppForeground = false
+                    TelemetryHub.isAppForeground = false
+                    localMonitor.stop()
+                }
+                else -> {}
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -182,16 +210,18 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
         }
     }
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            val data = if (OverlayService.isRunning) {
+    LaunchedEffect(isAppForeground) {
+        while (isAppForeground) {
+            val running = OverlayService.isRunning
+            if (running) localMonitor.stop()
+            val data = if (running) {
                 TelemetryHub.latest
             } else {
                 withContext(Dispatchers.IO) { localMonitor.collect() }
             }
             telemetry = data
             fpsHistory = synchronized(TelemetryHub.fpsHistory) { TelemetryHub.fpsHistory.toList() }
-            serviceRunning = OverlayService.isRunning
+            serviceRunning = running
             touchLocked = OverlayService.isTouchLocked
             isRecording = TelemetryHub.isRecording
             lastBenchmark = TelemetryHub.lastSummary
@@ -199,7 +229,6 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
             delay(500L)
         }
     }
-
     Scaffold(
         containerColor = BgObsidian,
         topBar = {
@@ -249,7 +278,9 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 action = OverlayService.ACTION_STOP
                             })
                             serviceRunning = false
+                            localMonitor.start()
                         } else {
+                            localMonitor.stop()
                             ContextCompat.startForegroundService(
                                 context,
                                 Intent(context, OverlayService::class.java).apply {
@@ -365,6 +396,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             ComposeSparkline(points = fpsHistory, accent = activeAccent)
                         }
                     }
+
                     item {
                         CyberCard {
                             SectionTitle(
@@ -381,6 +413,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                         TelemetryHub.startRecording()
                                         isRecording = true
                                     }
+                                    pushOverlayUpdate()
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(10.dp),
@@ -410,7 +443,6 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             }
                         }
                     }
-
                     item {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -576,7 +608,6 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             }
                         }
                     }
-
                     item {
                         CyberCard {
                             SectionTitle("BENTUK & TEMA WARNA HUD")
@@ -766,15 +797,18 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 onClick = {
                                     try {
                                         if (!Shizuku.pingBinder()) {
-                                            Toast.makeText(context, "Jalankan service Shizuku dulu via Wireless Debugging / aShell", Toast.LENGTH_LONG).show()
+                                            ShizukuProvider.requestBinderForNonProviderProcess(context)
+                                        }
+                                        if (!Shizuku.pingBinder()) {
+                                            Toast.makeText(context, "Binder Shizuku belum merespons. Pastikan Shizuku aktif lalu coba tap lagi.", Toast.LENGTH_LONG).show()
                                         } else if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
                                             Shizuku.requestPermission(100)
                                         } else {
                                             shizukuConnected = true
                                             Toast.makeText(context, "Shizuku sudah terhubung!", Toast.LENGTH_SHORT).show()
                                         }
-                                    } catch (_: Throwable) {
-                                        Toast.makeText(context, "Aplikasi Shizuku belum terpasang", Toast.LENGTH_SHORT).show()
+                                    } catch (t: Throwable) {
+                                        Toast.makeText(context, "Shizuku error: ${t.message}", Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),

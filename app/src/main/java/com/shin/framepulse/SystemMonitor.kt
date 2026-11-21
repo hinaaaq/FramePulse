@@ -7,18 +7,23 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.TrafficStats
 import android.os.BatteryManager
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.view.Choreographer
 import rikka.shizuku.Shizuku
+import rikka.shizuku.ShizukuProvider
+import java.io.BufferedReader
+import java.io.BufferedWriter
 import java.io.File
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
 import java.util.Locale
 import kotlin.math.abs
-import kotlin.math.roundToInt
 
-data class CoreStat(
+data class CoreInfo(
     val coreIndex: Int,
     val curMhz: Int,
-    val maxMhz: Int,
     val loadPercent: Int,
     val isBigCore: Boolean
 )
@@ -29,66 +34,40 @@ data class TelemetryData(
     val isTrueGameFps: Boolean = false,
     val cpuLoadPercent: Int = 0,
     val cpuMaxGhz: Float = 0f,
-    val cores: List<CoreStat> = emptyList(),
     val gpuLoadPercent: Int? = null,
     val ramUsedGb: Float = 0f,
     val ramTotalGb: Float = 0f,
     val batteryTempC: Float = 0f,
     val powerWatts: Float = 0f,
-    val voltageVolts: Float = 0f,
     val currentMa: Int = 0,
     val netDownKbps: Float = 0f,
-    val netUpKbps: Float = 0f
+    val netUpKbps: Float = 0f,
+    val cores: List<CoreInfo> = emptyList()
 )
 
 data class BenchmarkSummary(
-    val durationSec: Int,
-    val sampleCount: Int,
     val avgFps: Float,
     val onePercentLowFps: Int,
     val minFps: Int,
     val maxFps: Int,
-    val peakTempC: Float,
-    val avgWatts: Float
+    val peakTempC: Float
 )
 
 object TelemetryHub {
     @Volatile var latest: TelemetryData = TelemetryData()
-    val fpsHistory = ArrayDeque<Int>(48)
+    val fpsHistory: MutableList<Int> = mutableListOf()
 
-    @Volatile var isRecording = false
-        private set
-    private var recordStartMs = 0L
-    private val recordedFps = mutableListOf<Int>()
-    private var peakTemp = 0f
-    private var wattSum = 0f
-    private var sampleCounter = 0
-
+    @Volatile var isRecording: Boolean = false
     @Volatile var lastSummary: BenchmarkSummary? = null
+    @Volatile var isAppForeground: Boolean = true
 
-    fun pushSample(data: TelemetryData) {
-        latest = data
-        synchronized(fpsHistory) {
-            if (fpsHistory.size >= 45) fpsHistory.removeFirst()
-            fpsHistory.addLast(data.fps)
-        }
-        if (isRecording && data.fps > 0) {
-            synchronized(recordedFps) {
-                recordedFps.add(data.fps)
-                if (data.batteryTempC > peakTemp) peakTemp = data.batteryTempC
-                wattSum += data.powerWatts
-                sampleCounter++
-            }
-        }
-    }
+    private val recordedFps = mutableListOf<Int>()
+    private var peakRecordedTemp = 0f
 
     fun startRecording() {
         synchronized(recordedFps) {
             recordedFps.clear()
-            peakTemp = 0f
-            wattSum = 0f
-            sampleCounter = 0
-            recordStartMs = SystemClock.elapsedRealtime()
+            peakRecordedTemp = 0f
             isRecording = true
         }
     }
@@ -98,260 +77,427 @@ object TelemetryHub {
             isRecording = false
             if (recordedFps.isEmpty()) return null
             val sorted = recordedFps.sorted()
-            val onePctIndex = (sorted.size * 0.01).toInt().coerceIn(0, sorted.lastIndex)
-            val duration = ((SystemClock.elapsedRealtime() - recordStartMs) / 1000L).toInt().coerceAtLeast(1)
+            val avg = sorted.average().toFloat()
+            val min = sorted.first()
+            val max = sorted.last()
+            val onePctCount = maxOf(1, (sorted.size * 0.01).toInt())
+            val onePctLow = sorted.take(onePctCount).average().toInt()
             val summary = BenchmarkSummary(
-                durationSec = duration,
-                sampleCount = sorted.size,
-                avgFps = sorted.average().toFloat(),
-                onePercentLowFps = sorted[onePctIndex],
-                minFps = sorted.first(),
-                maxFps = sorted.last(),
-                peakTempC = peakTemp,
-                avgWatts = if (sampleCounter > 0) wattSum / sampleCounter else 0f
+                avgFps = avg,
+                onePercentLowFps = onePctLow,
+                minFps = min,
+                maxFps = max,
+                peakTempC = peakRecordedTemp
             )
             lastSummary = summary
             return summary
         }
     }
-}
 
+    fun publish(data: TelemetryData) {
+        latest = data
+        synchronized(fpsHistory) {
+            fpsHistory.add(data.fps)
+            if (fpsHistory.size > 60) {
+                fpsHistory.removeAt(0)
+            }
+        }
+        if (isRecording && data.fps > 0) {
+            synchronized(recordedFps) {
+                if (isRecording) {
+                    recordedFps.add(data.fps)
+                    if (data.batteryTempC > peakRecordedTemp) {
+                        peakRecordedTemp = data.batteryTempC
+                    }
+                }
+            }
+        }
+    }
+}
 class SystemMonitor(private val context: Context) {
 
-    private var uiFrameCount = 0
-    private var lastUiFpsTimestamp = System.nanoTime()
-    private var latestUiFps = 0
-    private var latestUiFrameTime = 0f
-    private var trackingChoreographer = false
+    private val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+    private val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+    private val mainHandler = Handler(Looper.getMainLooper())
 
-    private var prevRxBytes = TrafficStats.getTotalRxBytes()
-    private var prevTxBytes = TrafficStats.getTotalTxBytes()
-    private var prevNetTimeMs = SystemClock.elapsedRealtime()
+    @Volatile private var running = false
+    @Volatile private var choreographerActive = false
+    private var frameCount = 0
+    private var lastChoreoNs = 0L
+    private var choreoFps = 0
+    private var choreoFrameMs = 0f
+
+    private var shellProcess: Process? = null
+    private var shellWriter: BufferedWriter? = null
+    private var shellReader: BufferedReader? = null
+    private var activeGameLayer: String? = null
+    private var lastLayerScanMs = 0L
+    private var lastPresentNs = 0L
+    private var lastSfQueryMs = 0L
+    private var sfFps = 0
+    private var sfFrameMs = 0f
+
+    private var lastCpuQueryMs = 0L
+    private var cachedCpuLoad = 0
+    private var cachedCpuMaxGhz = 0f
+    private var cachedGpuLoad: Int? = null
+    private var cachedCores: List<CoreInfo> = emptyList()
+    private var prevTotalCpu = 0L
+    private var prevIdleCpu = 0L
+
+    private var lastSlowQueryMs = 0L
+    private var cachedRamUsed = 0f
+    private var cachedRamTotal = 0f
+    private var cachedTempC = 0f
+    private var cachedWatts = 0f
+    private var cachedCurrentMa = 0
+    private var cachedDownKbps = 0f
+    private var cachedUpKbps = 0f
+    private var prevRxBytes = -1L
+    private var prevTxBytes = -1L
+    private var prevNetMs = 0L
+
+    private val newProcessMethod by lazy {
+        Shizuku::class.java.getDeclaredMethod(
+            "newProcess",
+            Array<String>::class.java,
+            Array<String>::class.java,
+            String::class.java
+        ).apply { isAccessible = true }
+    }
 
     private val frameCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
-            if (!trackingChoreographer) return
-            uiFrameCount++
-            val elapsed = frameTimeNanos - lastUiFpsTimestamp
-            if (elapsed >= 400_000_000L) {
-                val fpsVal = ((uiFrameCount * 1_000_000_000.0) / elapsed).roundToInt()
-                latestUiFps = fpsVal
-                latestUiFrameTime = if (fpsVal > 0) 1000f / fpsVal else 0f
-                uiFrameCount = 0
-                lastUiFpsTimestamp = frameTimeNanos
+            if (!running || !choreographerActive) return
+            if (lastChoreoNs == 0L) {
+                lastChoreoNs = frameTimeNanos
+            }
+            frameCount++
+            val elapsedNs = frameTimeNanos - lastChoreoNs
+            if (elapsedNs >= 500_000_000L) {
+                val secs = elapsedNs / 1_000_000_000f
+                choreoFps = (frameCount / secs).toInt().coerceIn(0, 144)
+                choreoFrameMs = if (choreoFps > 0) 1000f / choreoFps else 0f
+                frameCount = 0
+                lastChoreoNs = frameTimeNanos
             }
             Choreographer.getInstance().postFrameCallback(this)
         }
     }
 
     fun start() {
-        if (!trackingChoreographer) {
-            trackingChoreographer = true
-            lastUiFpsTimestamp = System.nanoTime()
-            uiFrameCount = 0
-            prevRxBytes = TrafficStats.getTotalRxBytes()
-            prevTxBytes = TrafficStats.getTotalTxBytes()
-            prevNetTimeMs = SystemClock.elapsedRealtime()
-            Choreographer.getInstance().postFrameCallback(frameCallback)
-        }
+        if (running) return
+        running = true
+        setChoreographerEnabled(true)
     }
 
     fun stop() {
-        trackingChoreographer = false
-        Choreographer.getInstance().removeFrameCallback(frameCallback)
+        running = false
+        setChoreographerEnabled(false)
+        closeShell()
+    }
+
+    private fun setChoreographerEnabled(enable: Boolean) {
+        if (choreographerActive == enable) return
+        choreographerActive = enable
+        if (enable) {
+            frameCount = 0
+            lastChoreoNs = 0L
+            mainHandler.post {
+                if (running && choreographerActive) {
+                    Choreographer.getInstance().postFrameCallback(frameCallback)
+                }
+            }
+        }
     }
 
     fun isShizukuReady(): Boolean {
         return try {
+            if (!Shizuku.pingBinder()) {
+                ShizukuProvider.requestBinderForNonProviderProcess(context)
+            }
             Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
         } catch (_: Throwable) {
             false
         }
     }
 
+    private fun ensureShell(): Boolean {
+        if (!isShizukuReady()) {
+            closeShell()
+            return false
+        }
+        val proc = shellProcess
+        if (proc != null) {
+            return try {
+                proc.exitValue()
+                closeShell()
+                openShell()
+            } catch (_: IllegalThreadStateException) {
+                true
+            }
+        }
+        return openShell()
+    }
+
+    private fun openShell(): Boolean {
+        return try {
+            val proc = newProcessMethod.invoke(null, arrayOf("sh"), null, null) as Process
+            shellProcess = proc
+            shellWriter = BufferedWriter(OutputStreamWriter(proc.outputStream))
+            shellReader = BufferedReader(InputStreamReader(proc.inputStream))
+            true
+        } catch (_: Throwable) {
+            closeShell()
+            false
+        }
+    }
+
+    private fun closeShell() {
+        try { shellWriter?.close() } catch (_: Throwable) {}
+        try { shellReader?.close() } catch (_: Throwable) {}
+        try { shellProcess?.destroy() } catch (_: Throwable) {}
+        shellWriter = null
+        shellReader = null
+        shellProcess = null
+        activeGameLayer = null
+    }
+
+    private fun runShellCmd(cmd: String): List<String> {
+        val writer = shellWriter ?: return emptyList()
+        val reader = shellReader ?: return emptyList()
+        return try {
+            writer.write("$cmd\necho __FP_END__\n")
+            writer.flush()
+            val out = ArrayList<String>(132)
+            while (true) {
+                val line = reader.readLine() ?: break
+                if (line == "__FP_END__") break
+                out.add(line)
+            }
+            out
+        } catch (_: Throwable) {
+            closeShell()
+            emptyList()
+        }
+    }
+    private fun querySurfaceFlingerFps(nowMs: Long): Boolean {
+        if (!ensureShell()) return false
+
+        if (activeGameLayer == null || nowMs - lastLayerScanMs >= 3000L) {
+            lastLayerScanMs = nowMs
+            val layers = runShellCmd("dumpsys SurfaceFlinger --list")
+            val found = layers.lastOrNull { line ->
+                (line.contains("SurfaceView") || line.contains("BLAST")) &&
+                    !line.contains("Background for") &&
+                    !line.contains("FramePulse")
+            }?.trim()
+            if (found != activeGameLayer) {
+                activeGameLayer = found
+                lastPresentNs = 0L
+                lastSfQueryMs = 0L
+            }
+        }
+
+        val layer = activeGameLayer ?: return false
+        val lines = runShellCmd("dumpsys SurfaceFlinger --latency \"$layer\"")
+        if (lines.size < 3) {
+            activeGameLayer = null
+            return false
+        }
+
+        val validTimestamps = ArrayList<Long>(128)
+        for (i in 1 until lines.size) {
+            val parts = lines[i].split('\t')
+            if (parts.size >= 2) {
+                val presentNs = parts[1].trim().toLongOrNull() ?: 0L
+                if (presentNs > 0L && presentNs < Long.MAX_VALUE) {
+                    validTimestamps.add(presentNs)
+                }
+            }
+        }
+
+        if (validTimestamps.isEmpty()) return false
+        validTimestamps.sort()
+        val newestNs = validTimestamps.last()
+
+        if (lastPresentNs == 0L || newestNs <= lastPresentNs) {
+            if (lastSfQueryMs > 0L && nowMs - lastSfQueryMs > 1200L) {
+                sfFps = 0
+                sfFrameMs = 0f
+            }
+            if (lastPresentNs == 0L) {
+                lastPresentNs = newestNs
+                lastSfQueryMs = nowMs
+            }
+            return true
+        }
+
+        val newFrames = validTimestamps.count { it > lastPresentNs }
+        val deltaNs = newestNs - lastPresentNs
+        if (deltaNs > 0L && newFrames > 0) {
+            val measured = ((newFrames * 1_000_000_000.0) / deltaNs).toInt().coerceIn(1, 144)
+            sfFps = measured
+            sfFrameMs = 1000f / measured
+            lastPresentNs = newestNs
+            lastSfQueryMs = nowMs
+        }
+        return true
+    }
+
     fun collect(): TelemetryData {
-        val shizukuActive = isShizukuReady()
-
-        val sfPair = if (shizukuActive) getSurfaceFlingerFps() else null
-        val finalFps = sfPair?.first ?: latestUiFps
-        val finalFrameTime = sfPair?.second ?: latestUiFrameTime
-
-        val (coresList, freqLoad, peakGhz) = readCpuDetails()
-        val shizukuCpu = if (shizukuActive) readShizukuCpuPercent() else null
-        val finalCpuLoad = (shizukuCpu ?: freqLoad).coerceIn(0, 100)
-
-        val gpuLoad = readGpuLoad()
-
-        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        val memInfo = ActivityManager.MemoryInfo()
-        am.getMemoryInfo(memInfo)
-        val totalGb = memInfo.totalMem / (1024f * 1024f * 1024f)
-        val usedGb = (memInfo.totalMem - memInfo.availMem) / (1024f * 1024f * 1024f)
-
-        val batteryIntent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val tempTenths = batteryIntent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0
-        val tempC = tempTenths / 10f
-        val voltageMv = batteryIntent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 3850) ?: 3850
-
-        val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-        val rawCurrent = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
-        val currentMa = if (abs(rawCurrent) > 10_000) rawCurrent / 1000f else rawCurrent.toFloat()
-        val volts = voltageMv / 1000f
-        val watts = abs(volts * (currentMa / 1000f))
-
         val nowMs = SystemClock.elapsedRealtime()
-        val dtSec = ((nowMs - prevNetTimeMs) / 1000f).coerceAtLeast(0.1f)
-        val curRx = TrafficStats.getTotalRxBytes()
-        val curTx = TrafficStats.getTotalTxBytes()
-        val downKbps = if (curRx >= prevRxBytes && prevRxBytes > 0) ((curRx - prevRxBytes) / 1024f) / dtSec else 0f
-        val upKbps = if (curTx >= prevTxBytes && prevTxBytes > 0) ((curTx - prevTxBytes) / 1024f) / dtSec else 0f
-        prevRxBytes = curRx
-        prevTxBytes = curTx
-        prevNetTimeMs = nowMs
+        val fg = TelemetryHub.isAppForeground
+
+        val trueFpsOk = querySurfaceFlingerFps(nowMs)
+        setChoreographerEnabled(!trueFpsOk)
+        val fps = if (trueFpsOk) sfFps else choreoFps
+        val frameMs = if (trueFpsOk) sfFrameMs else choreoFrameMs
+
+        if (nowMs - lastCpuQueryMs >= 1000L || lastCpuQueryMs == 0L) {
+            lastCpuQueryMs = nowMs
+            if (fg || Prefs.showCpu) cachedCpuLoad = readCpuLoad()
+            if (fg || Prefs.showClock) cachedCpuMaxGhz = readCpuMaxGhz()
+            if (fg || Prefs.showGpu) cachedGpuLoad = readGpuLoad()
+            if (fg) cachedCores = readAllCores()
+        }
+
+        if (nowMs - lastSlowQueryMs >= 2000L || lastSlowQueryMs == 0L) {
+            lastSlowQueryMs = nowMs
+            if (fg || Prefs.showRam) readRam()
+            if (fg || Prefs.showTemp || Prefs.showWatt) readBatteryAndThermal()
+            if (fg || Prefs.showNet) readNetwork(nowMs)
+        }
 
         val data = TelemetryData(
-            fps = finalFps,
-            frameTimeMs = finalFrameTime,
-            isTrueGameFps = sfPair != null,
-            cpuLoadPercent = finalCpuLoad,
-            cpuMaxGhz = peakGhz,
-            cores = coresList,
-            gpuLoadPercent = gpuLoad,
-            ramUsedGb = usedGb,
-            ramTotalGb = totalGb,
-            batteryTempC = tempC,
-            powerWatts = watts,
-            voltageVolts = volts,
-            currentMa = currentMa.roundToInt(),
-            netDownKbps = downKbps,
-            netUpKbps = upKbps
+            fps = fps,
+            frameTimeMs = frameMs,
+            isTrueGameFps = trueFpsOk,
+            cpuLoadPercent = cachedCpuLoad,
+            cpuMaxGhz = cachedCpuMaxGhz,
+            gpuLoadPercent = cachedGpuLoad,
+            ramUsedGb = cachedRamUsed,
+            ramTotalGb = cachedRamTotal,
+            batteryTempC = cachedTempC,
+            powerWatts = cachedWatts,
+            currentMa = cachedCurrentMa,
+            netDownKbps = cachedDownKbps,
+            netUpKbps = cachedUpKbps,
+            cores = if (fg) cachedCores else emptyList()
         )
-        TelemetryHub.pushSample(data)
+        TelemetryHub.publish(data)
         return data
     }
 
-    private fun readCpuDetails(): Triple<List<CoreStat>, Int, Float> {
-        var curSum = 0L
-        var maxSum = 0L
-        var highestKhz = 0L
-        val cores = mutableListOf<CoreStat>()
-
-        for (i in 0 until 8) {
-            try {
-                val curFile = File("/sys/devices/system/cpu/cpu$i/cpufreq/scaling_cur_freq")
-                val maxFile = File("/sys/devices/system/cpu/cpu$i/cpufreq/cpuinfo_max_freq")
-                if (curFile.exists() && maxFile.exists()) {
-                    val cur = curFile.readText().trim().toLongOrNull() ?: 0L
-                    val max = maxFile.readText().trim().toLongOrNull() ?: 0L
-                    if (max > 0) {
-                        curSum += cur
-                        maxSum += max
-                        if (cur > highestKhz) highestKhz = cur
-                        val pct = ((cur * 100.0) / max).roundToInt().coerceIn(0, 100)
-                        cores.add(
-                            CoreStat(
-                                coreIndex = i,
-                                curMhz = (cur / 1000L).toInt(),
-                                maxMhz = (max / 1000L).toInt(),
-                                loadPercent = pct,
-                                isBigCore = max >= 2_100_000L
-                            )
-                        )
-                    }
-                }
-            } catch (_: Exception) {
-            }
+    private fun readCpuLoad(): Int {
+        return try {
+            val line = File("/proc/stat").bufferedReader().use { it.readLine() } ?: return cachedCpuLoad
+            val toks = line.trim().split(Regex("\\s+"))
+            if (toks.size < 5) return cachedCpuLoad
+            val user = toks[1].toLong()
+            val nice = toks[2].toLong()
+            val sys = toks[3].toLong()
+            val idle = toks[4].toLong()
+            val iowait = toks.getOrNull(5)?.toLongOrNull() ?: 0L
+            val irq = toks.getOrNull(6)?.toLongOrNull() ?: 0L
+            val softirq = toks.getOrNull(7)?.toLongOrNull() ?: 0L
+            val total = user + nice + sys + idle + iowait + irq + softirq
+            val idleAll = idle + iowait
+            val diffTotal = total - prevTotalCpu
+            val diffIdle = idleAll - prevIdleCpu
+            prevTotalCpu = total
+            prevIdleCpu = idleAll
+            if (diffTotal > 0L) (((diffTotal - diffIdle) * 100L) / diffTotal).toInt().coerceIn(0, 100) else cachedCpuLoad
+        } catch (_: Throwable) {
+            cachedCpuLoad
         }
-        val totalPercent = if (maxSum > 0) ((curSum * 100.0) / maxSum).roundToInt() else 0
-        val peakGhz = highestKhz / 1_000_000f
-        return Triple(cores, totalPercent, peakGhz)
+    }
+
+    private fun readCpuMaxGhz(): Float {
+        var maxKhz = 0L
+        for (i in 0 until 8) {
+            val khz = readLongFile("/sys/devices/system/cpu/cpu$i/cpufreq/scaling_cur_freq")
+            if (khz > maxKhz) maxKhz = khz
+        }
+        return if (maxKhz > 0L) maxKhz / 1_000_000f else cachedCpuMaxGhz
     }
 
     private fun readGpuLoad(): Int? {
         val paths = listOf(
-            "/sys/module/ged/parameters/gpu_loading",
-            "/sys/class/misc/mali0/device/dvfs_utilization"
+            "/sys/kernel/ged/hal/gpu_utilization",
+            "/sys/class/misc/mali0/device/utilization",
+            "/sys/class/kgsl/kgsl-3d0/gpu_busy_percentage"
         )
         for (path in paths) {
             try {
                 val f = File(path)
                 if (f.exists() && f.canRead()) {
-                    val raw = f.readText().trim().substringBefore(" ").toIntOrNull()
-                    if (raw != null && raw in 0..100) return raw
+                    val raw = f.readText().trim().split(Regex("[\\s%]+")).firstOrNull()?.toIntOrNull()
+                    if (raw != null) return raw.coerceIn(0, 100)
                 }
-            } catch (_: Exception) {
-            }
+            } catch (_: Throwable) {}
         }
         return null
     }
 
-    private fun readShizukuCpuPercent(): Int? {
-        val out = execShizuku("top -n 1 -b | grep -m 1 '%cpu'") ?: return null
-        return try {
-            val parts = out.trim().split(Regex("\\s+"))
-            val totalPart = parts.firstOrNull { it.endsWith("%cpu") }?.removeSuffix("%cpu")?.toFloatOrNull() ?: return null
-            val idlePart = parts.firstOrNull { it.endsWith("%idle") }?.removeSuffix("%idle")?.toFloatOrNull() ?: return null
-            if (totalPart <= 0f) return null
-            (((totalPart - idlePart) / totalPart) * 100f).roundToInt()
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun getSurfaceFlingerFps(): Pair<Int, Float>? {
-        val focus = execShizuku("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'") ?: return null
-        val pkgMatch = Regex("([a-zA-Z0-9_]+\\.[a-zA-Z0-9_.]+)/").find(focus) ?: return null
-        val pkgName = pkgMatch.groupValues[1]
-        if (pkgName == context.packageName || pkgName == "com.sec.android.app.launcher") return null
-
-        val layers = execShizuku("dumpsys SurfaceFlinger --list") ?: return null
-        val targetLayer = layers.lines().firstOrNull {
-            it.contains(pkgName) && (it.contains("SurfaceView") || it.contains("BLAST"))
-        } ?: return null
-
-        val latency = execShizuku("dumpsys SurfaceFlinger --latency \"$targetLayer\"") ?: return null
-        val timestamps = mutableListOf<Long>()
-        for (line in latency.lines().drop(1)) {
-            val cols = line.trim().split(Regex("\\s+"))
-            if (cols.size >= 2) {
-                val presentTime = cols[1].toLongOrNull() ?: 0L
-                if (presentTime > 0L && presentTime != Long.MAX_VALUE) {
-                    timestamps.add(presentTime)
-                }
+    private fun readAllCores(): List<CoreInfo> {
+        val list = ArrayList<CoreInfo>(8)
+        for (i in 0 until 8) {
+            val cur = readLongFile("/sys/devices/system/cpu/cpu$i/cpufreq/scaling_cur_freq")
+            val max = readLongFile("/sys/devices/system/cpu/cpu$i/cpufreq/cpuinfo_max_freq").coerceAtLeast(1L)
+            if (cur > 0L) {
+                val pct = ((cur * 100L) / max).toInt().coerceIn(0, 100)
+                list.add(CoreInfo(i, (cur / 1000L).toInt(), pct, i >= 6))
             }
         }
-        if (timestamps.size < 2) return null
-        val latest = timestamps.last()
-        val oneSecAgo = latest - 1_000_000_000L
-        val recent = timestamps.filter { it > oneSecAgo }
-        val fps = recent.size.coerceAtLeast(1)
-        val avgFrameMs = if (recent.size >= 2) {
-            ((recent.last() - recent.first()) / 1_000_000f) / (recent.size - 1)
-        } else {
-            1000f / fps
-        }
-        return fps to avgFrameMs
+        return list
     }
 
-    private fun execShizuku(cmd: String): String? {
+    private fun readRam() {
+        val mi = ActivityManager.MemoryInfo()
+        activityManager.getMemoryInfo(mi)
+        val total = mi.totalMem / (1024f * 1024f * 1024f)
+        val avail = mi.availMem / (1024f * 1024f * 1024f)
+        cachedRamTotal = total
+        cachedRamUsed = (total - avail).coerceAtLeast(0f)
+    }
+
+    private fun readBatteryAndThermal() {
+        val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val tempTenths = intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0
+        val voltageMv = intent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) ?: 0
+        if (tempTenths > 0) cachedTempC = tempTenths / 10f
+
+        val rawCurrent = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
+        val ma = if (abs(rawCurrent) > 10_000) abs(rawCurrent) / 1000 else abs(rawCurrent)
+        cachedCurrentMa = ma
+        if (voltageMv > 0 && ma > 0) {
+            cachedWatts = (voltageMv / 1000f) * (ma / 1000f)
+        }
+    }
+
+    private fun readNetwork(nowMs: Long) {
+        val rx = TrafficStats.getTotalRxBytes()
+        val tx = TrafficStats.getTotalTxBytes()
+        if (rx >= 0L && tx >= 0L && prevRxBytes >= 0L && nowMs > prevNetMs) {
+            val dt = (nowMs - prevNetMs) / 1000f
+            cachedDownKbps = ((rx - prevRxBytes) / 1024f / dt).coerceAtLeast(0f)
+            cachedUpKbps = ((tx - prevTxBytes) / 1024f / dt).coerceAtLeast(0f)
+        }
+        prevRxBytes = rx
+        prevTxBytes = tx
+        prevNetMs = nowMs
+    }
+
+    private fun readLongFile(path: String): Long {
         return try {
-            val method = Shizuku::class.java.getDeclaredMethod(
-                "newProcess",
-                Array<String>::class.java,
-                Array<String>::class.java,
-                String::class.java
-            )
-            method.isAccessible = true
-            val process = method.invoke(null, arrayOf("sh", "-c", cmd), null, null) as Process
-            val text = process.inputStream.bufferedReader().use { it.readText() }
-            process.waitFor()
-            text
+            File(path).readText().trim().toLongOrNull() ?: 0L
         } catch (_: Throwable) {
-            null
+            0L
         }
     }
 
-    fun formatFloat(value: Float, decimals: Int = 1): String {
+    fun formatFloat(value: Float, decimals: Int): String {
         return String.format(Locale.US, "%.${decimals}f", value)
     }
 }

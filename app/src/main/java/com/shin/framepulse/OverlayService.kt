@@ -9,6 +9,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
@@ -17,6 +18,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.Process
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
@@ -28,6 +30,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 
 class OverlayService : Service() {
@@ -40,8 +43,11 @@ class OverlayService : Service() {
         private const val CHANNEL_ID = "framepulse_overlay_channel"
         private const val NOTIF_ID = 1001
 
+        @Volatile
         var isRunning = false
             private set
+
+        @Volatile
         var isTouchLocked = false
             private set
     }
@@ -54,23 +60,45 @@ class OverlayService : Service() {
     private var hudText: TextView? = null
     private var sparklineView: HudSparklineView? = null
     private var quickActionRow: LinearLayout? = null
+    private var recBtnView: TextView? = null
     private var bgDrawable: GradientDrawable? = null
 
     private var lastTelemetry: TelemetryData? = null
+    private var lastRenderedHash: Int = 0
+    private val isCollecting = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val workerExecutor = Executors.newSingleThreadExecutor()
+    private val workerExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread({
+            Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+            runnable.run()
+        }, "FramePulse-SensorWorker").apply {
+            isDaemon = true
+        }
+    }
 
     private val updateRunnable = object : Runnable {
         override fun run() {
             if (!isRunning) return
+            if (!isCollecting.compareAndSet(false, true)) {
+                mainHandler.postDelayed(this, 100L)
+                return
+            }
             workerExecutor.execute {
-                val data = monitor.collect()
-                lastTelemetry = data
-                mainHandler.post {
-                    renderTelemetry(data)
+                try {
+                    val data = monitor.collect()
+                    lastTelemetry = data
+                    mainHandler.post {
+                        if (isRunning) {
+                            renderTelemetry(data)
+                        }
+                    }
+                } finally {
+                    isCollecting.set(false)
+                    if (isRunning) {
+                        mainHandler.postDelayed(this, Prefs.updateIntervalMs)
+                    }
                 }
             }
-            mainHandler.postDelayed(this, Prefs.updateIntervalMs)
         }
     }
 
@@ -82,6 +110,20 @@ class OverlayService : Service() {
         createNotificationChannel()
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (isRunning) {
+            mainHandler.post {
+                clampPositionToScreen()
+                rootContainer?.let {
+                    try {
+                        windowManager.updateViewLayout(it, layoutParams)
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+        }
+    }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
@@ -98,6 +140,7 @@ class OverlayService : Service() {
             }
             ACTION_UPDATE_CONFIG -> {
                 if (isRunning) {
+                    lastRenderedHash = 0
                     applyVisualConfig()
                     lastTelemetry?.let { renderTelemetry(it) }
                     return START_STICKY
@@ -118,6 +161,7 @@ class OverlayService : Service() {
             setupOverlayView()
             applyVisualConfig()
             monitor.start()
+            mainHandler.removeCallbacks(updateRunnable)
             mainHandler.post(updateRunnable)
         }
         return START_STICKY
@@ -141,7 +185,7 @@ class OverlayService : Service() {
         hudText = TextView(this).apply {
             typeface = Typeface.MONOSPACE
             setTextColor(Color.WHITE)
-            setShadowLayer(4f, 1.5f, 1.5f, Color.BLACK)
+            includeFontPadding = false
             text = "FPS --"
         }
 
@@ -160,8 +204,8 @@ class OverlayService : Service() {
             setPadding(0, dp(4), 0, 0)
         }
 
-        val recBtn = TextView(this).apply {
-            text = "[REC]"
+        recBtnView = TextView(this).apply {
+            text = if (TelemetryHub.isRecording) "[STOP REC]" else "[REC]"
             textSize = 9.5f
             typeface = Typeface.MONOSPACE
             setTextColor(Color.parseColor("#FBBF24"))
@@ -175,6 +219,7 @@ class OverlayService : Service() {
                     TelemetryHub.startRecording()
                     text = "[STOP REC]"
                 }
+                lastRenderedHash = 0
             }
         }
 
@@ -197,7 +242,7 @@ class OverlayService : Service() {
             setOnClickListener { stopSelf() }
         }
 
-        quickActionRow?.addView(recBtn)
+        quickActionRow?.addView(recBtnView)
         quickActionRow?.addView(lockBtn)
         quickActionRow?.addView(closeBtn)
 
@@ -240,15 +285,21 @@ class OverlayService : Service() {
                     if (abs(dx) > 5 || abs(dy) > 5) moved = true
                     layoutParams.x = initialX + dx
                     layoutParams.y = initialY + dy
-                    windowManager.updateViewLayout(rootContainer, layoutParams)
+                    clampPositionToScreen()
+                    try {
+                        windowManager.updateViewLayout(rootContainer, layoutParams)
+                    } catch (_: Exception) {
+                    }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
                     if (moved) {
+                        clampPositionToScreen()
                         Prefs.posX = layoutParams.x
                         Prefs.posY = layoutParams.y
                     } else {
                         Prefs.showQuickButtons = !Prefs.showQuickButtons
+                        recBtnView?.text = if (TelemetryHub.isRecording) "[STOP REC]" else "[REC]"
                         quickActionRow?.visibility =
                             if (Prefs.showQuickButtons && !isTouchLocked) View.VISIBLE else View.GONE
                     }
@@ -258,8 +309,19 @@ class OverlayService : Service() {
             }
         }
 
+        clampPositionToScreen()
         windowManager.addView(rootContainer, layoutParams)
     }
+    private fun clampPositionToScreen() {
+        val dm = resources.displayMetrics
+        val viewW = rootContainer?.width?.takeIf { it > 0 } ?: (120 * dm.density).toInt()
+        val viewH = rootContainer?.height?.takeIf { it > 0 } ?: (40 * dm.density).toInt()
+        val maxX = (dm.widthPixels - viewW).coerceAtLeast(0)
+        val maxY = (dm.heightPixels - viewH).coerceAtLeast(0)
+        layoutParams.x = layoutParams.x.coerceIn(0, maxX)
+        layoutParams.y = layoutParams.y.coerceIn(0, maxY)
+    }
+
     private fun getThemeAccent(): Int {
         return when (Prefs.themeMode) {
             Prefs.THEME_EMERALD -> Color.parseColor("#10B981")
@@ -281,11 +343,14 @@ class OverlayService : Service() {
                 dp(1),
                 Color.argb(strokeAlpha, Color.red(accent), Color.green(accent), Color.blue(accent))
             )
+            hudText?.setShadowLayer(0f, 0f, 0f, Color.TRANSPARENT)
         } else {
             bgDrawable?.setStroke(0, Color.TRANSPARENT)
+            hudText?.setShadowLayer(3.5f, 1f, 1f, Color.BLACK)
         }
 
         hudText?.textSize = Prefs.textSizeSp
+        recBtnView?.text = if (TelemetryHub.isRecording) "[STOP REC]" else "[REC]"
         sparklineView?.visibility =
             if (Prefs.showHudGraph && Prefs.layoutMode != Prefs.LAYOUT_MINI) View.VISIBLE else View.GONE
         quickActionRow?.visibility =
@@ -293,6 +358,7 @@ class OverlayService : Service() {
 
         layoutParams.x = Prefs.posX
         layoutParams.y = Prefs.posY
+        clampPositionToScreen()
         rootContainer?.let {
             try {
                 windowManager.updateViewLayout(it, layoutParams)
@@ -309,11 +375,17 @@ class OverlayService : Service() {
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
         } else {
+            recBtnView?.text = if (TelemetryHub.isRecording) "[STOP REC]" else "[REC]"
             quickActionRow?.visibility = if (Prefs.showQuickButtons) View.VISIBLE else View.GONE
             layoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
         }
-        rootContainer?.let { windowManager.updateViewLayout(it, layoutParams) }
+        rootContainer?.let {
+            try {
+                windowManager.updateViewLayout(it, layoutParams)
+            } catch (_: Exception) {
+            }
+        }
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIF_ID, buildNotification())
     }
@@ -321,6 +393,7 @@ class OverlayService : Service() {
     private fun renderTelemetry(data: TelemetryData) {
         val mode = Prefs.layoutMode
         val accent = getThemeAccent()
+        val recording = TelemetryHub.isRecording
         val items = mutableListOf<Pair<String, Int>>()
 
         val fpsColor = when {
@@ -329,7 +402,7 @@ class OverlayService : Service() {
             else -> Color.parseColor("#EF4444")
         }
 
-        if (TelemetryHub.isRecording) {
+        if (recording) {
             items.add("●REC" to Color.parseColor("#EF4444"))
         }
 
@@ -371,17 +444,21 @@ class OverlayService : Service() {
             items.add("FPS ${data.fps}" to fpsColor)
         }
 
-        val separator = if (mode == Prefs.LAYOUT_VERTICAL) "\n" else " │ "
-        val builder = SpannableStringBuilder()
-        items.forEachIndexed { index, (text, color) ->
-            val start = builder.length
-            builder.append(text)
-            builder.setSpan(ForegroundColorSpan(color), start, builder.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            if (index < items.lastIndex) {
-                builder.append(separator)
+        val contentHash = items.hashCode() * 31 + mode.hashCode()
+        if (contentHash != lastRenderedHash) {
+            lastRenderedHash = contentHash
+            val separator = if (mode == Prefs.LAYOUT_VERTICAL) "\n" else " │ "
+            val builder = SpannableStringBuilder()
+            items.forEachIndexed { index, (text, color) ->
+                val start = builder.length
+                builder.append(text)
+                builder.setSpan(ForegroundColorSpan(color), start, builder.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                if (index < items.lastIndex) {
+                    builder.append(separator)
+                }
             }
+            hudText?.text = builder
         }
-        hudText?.text = builder
 
         if (Prefs.showHudGraph && mode != Prefs.LAYOUT_MINI) {
             val hist = synchronized(TelemetryHub.fpsHistory) { TelemetryHub.fpsHistory.toList() }
@@ -423,7 +500,7 @@ class OverlayService : Service() {
     override fun onDestroy() {
         isRunning = false
         isTouchLocked = false
-        mainHandler.removeCallbacks(updateRunnable)
+        mainHandler.removeCallbacksAndMessages(null)
         monitor.stop()
         workerExecutor.shutdownNow()
         rootContainer?.let {
@@ -432,6 +509,11 @@ class OverlayService : Service() {
             } catch (_: Exception) {
             }
         }
+        hudText = null
+        sparklineView = null
+        quickActionRow = null
+        recBtnView = null
+        rootContainer = null
         super.onDestroy()
     }
 
