@@ -127,7 +127,6 @@ object TelemetryHub {
                 val sortedFt = recordedFrameTimesMs.sorted()
                 val avgFt = sortedFt.average().toFloat().coerceAtLeast(1f)
                 avg = (1000f / avgFt).coerceIn(1f, 144f)
-                // Slowest 1% frame times -> True 1% Low FPS
                 val worstCount = maxOf(1, (sortedFt.size * 0.01).toInt())
                 val worstAvgFt = sortedFt.takeLast(worstCount).average().toFloat().coerceAtLeast(1f)
                 onePctLow = (1000f / worstAvgFt).roundToInt().coerceIn(1, 144)
@@ -363,8 +362,6 @@ class SystemMonitor(private val context: Context) {
         }
     }
 
-    fun isShellActive(): Boolean = synchronized(shellLock) { shellProcess != null }
-
     private fun ensureShell(): Boolean = synchronized(shellLock) {
         if (!isShizukuReady()) {
             closeShellInternal()
@@ -378,6 +375,17 @@ class SystemMonitor(private val context: Context) {
                 openShellInternal()
             } catch (_: IllegalThreadStateException) {
                 true
+            } catch (e: IllegalArgumentException) {
+                // Over Android Binder IPC, IllegalThreadStateException is deserialized as IllegalArgumentException
+                if (e.message?.contains("hasn't exited", ignoreCase = true) == true) {
+                    true
+                } else {
+                    closeShellInternal()
+                    openShellInternal()
+                }
+            } catch (_: Throwable) {
+                closeShellInternal()
+                openShellInternal()
             }
         }
         return openShellInternal()
@@ -415,7 +423,6 @@ class SystemMonitor(private val context: Context) {
         val writer = shellWriter ?: return emptyList()
         val reader = shellReader ?: return emptyList()
         return try {
-            // Redirect stderr to /dev/null inside subshell so errorStream buffer never deadlocks
             writer.write("{ $cmd ; } 2>/dev/null\necho __FP_END__\n")
             writer.flush()
             val out = ArrayList<String>(132)
@@ -453,12 +460,19 @@ class SystemMonitor(private val context: Context) {
             val excluded = listOf(
                 "Background for", "FramePulse", "NavigationBar", "StatusBar",
                 "ScreenDecor", "Wallpaper", "NotificationShade", "InputMethod",
-                "Taskbar", "Dim Layer", "Letterbox", "Transition", "Splash Screen"
+                "Taskbar", "Dim Layer", "Letterbox", "Transition", "Splash Screen",
+                "cocktailbarservice", "gametools", "systemui", "launcher",
+                "edgepanel", "smartcapture", "assist", "floating", "pip"
             )
-            val found = layers.lastOrNull { line ->
-                (line.contains("SurfaceView") || line.contains("BLAST")) &&
-                    excluded.none { bad -> line.contains(bad, ignoreCase = true) }
-            }?.trim()
+            val validLayers = layers.filter { line ->
+                excluded.none { bad -> line.contains(bad, ignoreCase = true) }
+            }
+            // Prefer game SurfaceView layers first; fallback to generic BLAST only if no SurfaceView exists
+            val found = (
+                validLayers.lastOrNull { it.contains("SurfaceView") && it.contains("BLAST") }
+                    ?: validLayers.lastOrNull { it.contains("SurfaceView") }
+                    ?: validLayers.lastOrNull { it.contains("BLAST") }
+                )?.trim()
 
             if (found != activeGameLayer) {
                 activeGameLayer = found
@@ -519,9 +533,21 @@ class SystemMonitor(private val context: Context) {
                 TelemetryHub.recordFrameTimes(frameTimes)
             }
 
-            val deltaNs = newestNs - lastPresentNs
-            if (deltaNs > 0L) {
-                val measured = ((freshTimestamps.size * 1_000_000_000.0) / deltaNs).roundToInt().coerceIn(1, maxHz)
+            val gapFromPrevNs = freshTimestamps.first() - lastPresentNs
+            val measured: Int? = if (freshTimestamps.size >= 2 && gapFromPrevNs > 250_000_000L) {
+                // Resumed after idle pause or 127-frame ring buffer wrap: use fresh burst span directly
+                val burstDeltaNs = freshTimestamps.last() - freshTimestamps.first()
+                if (burstDeltaNs > 0L) {
+                    (((freshTimestamps.size - 1) * 1_000_000_000.0) / burstDeltaNs).roundToInt().coerceIn(1, maxHz)
+                } else null
+            } else {
+                val deltaNs = newestNs - lastPresentNs
+                if (deltaNs > 0L) {
+                    ((freshTimestamps.size * 1_000_000_000.0) / deltaNs).roundToInt().coerceIn(1, maxHz)
+                } else null
+            }
+
+            if (measured != null) {
                 sfFps = measured
                 sfFrameMs = if (frameTimes.isNotEmpty()) frameTimes.average().toFloat() else (1000f / measured)
                 lastPresentNs = newestNs
@@ -606,7 +632,6 @@ class SystemMonitor(private val context: Context) {
     }
 
     private fun readCpuLoad(): Int {
-        // 1. Direct /proc/stat (fast path)
         try {
             val line = File("/proc/stat").bufferedReader().use { it.readLine() }
             if (!line.isNullOrBlank()) {
@@ -617,7 +642,6 @@ class SystemMonitor(private val context: Context) {
             }
         } catch (_: Throwable) {}
 
-        // 2. Shizuku /proc/stat (bypasses Android 13/14 SELinux restriction)
         if (ensureShell()) {
             val lines = runShellCmd("head -n 1 /proc/stat")
             val first = lines.firstOrNull()
@@ -629,7 +653,6 @@ class SystemMonitor(private val context: Context) {
             }
         }
 
-        // 3. Fallback: CPU frequency-based utilization estimate so it's never stuck at 0%
         if (cachedCores.isNotEmpty()) {
             cachedCpuSource = "FREQ"
             return cachedCores.map { it.loadPercent }.average().roundToInt().coerceIn(0, 100)
@@ -640,7 +663,9 @@ class SystemMonitor(private val context: Context) {
     private fun readGpuLoad(): Int? {
         val candidatePaths = listOf(
             "/sys/kernel/ged/hal/gpu_utilization",
+            "/sys/module/ged/parameters/gpu_loading",
             "/sys/class/misc/mali0/device/utilization",
+            "/proc/mali/utilization",
             "/sys/class/kgsl/kgsl-3d0/gpu_busy_percentage",
             "/sys/devices/platform/13000000.mali/utilization",
             "/sys/kernel/gpu/gpu_busy"
@@ -660,7 +685,6 @@ class SystemMonitor(private val context: Context) {
             } catch (_: Throwable) {}
         }
 
-        // Fallback via Shizuku shell (bypasses SELinux)
         if (ensureShell()) {
             val known = discoveredGpuPath
             if (known != null) {
@@ -700,7 +724,7 @@ class SystemMonitor(private val context: Context) {
         val hasHeterogeneous = maxClusterKhz > minClusterKhz
         return raw.map { (idx, cur, max) ->
             val pct = ((cur * 100L) / max).toInt().coerceIn(0, 100)
-            val isBig = if (hasHeterogeneous) max >= (maxClusterKhz * 0.88).toLong() else false
+            val isBig = if (hasHeterogeneous) max >= (maxClusterKhz * 0.95).toLong() else false
             CoreInfo(
                 coreIndex = idx,
                 curMhz = (cur / 1000L).toInt(),
@@ -730,7 +754,12 @@ class SystemMonitor(private val context: Context) {
         if (level >= 0 && scale > 0) cachedBattPct = ((level * 100f) / scale).roundToInt().coerceIn(0, 100)
 
         val rawCurrent = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
-        val ma = if (abs(rawCurrent) > 10_000) abs(rawCurrent) / 1000 else abs(rawCurrent)
+        val ma = if (rawCurrent == Int.MIN_VALUE) {
+            0
+        } else {
+            val absRaw = abs(rawCurrent.toLong())
+            if (absRaw > 10_000L) (absRaw / 1000L).toInt() else absRaw.toInt()
+        }
         cachedCurrentMa = ma
         if (voltageMv > 0 && ma > 0) {
             cachedWatts = (voltageMv / 1000f) * (ma / 1000f)

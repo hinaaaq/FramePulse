@@ -228,13 +228,18 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
             val data = if (running) {
                 TelemetryHub.latest
             } else {
-                withContext(Dispatchers.IO) { localMonitor.collect() }
+                withContext(Dispatchers.IO) { try { localMonitor.collect() } catch (_: Throwable) { TelemetryHub.latest } }
+            }
+            val prevRec = isRecording
+            val nowRec = TelemetryHub.isRecording
+            if (prevRec && !nowRec) {
+                benchmarkHistory = TelemetryHub.loadHistory()
             }
             telemetry = data
             fpsHistory = synchronized(TelemetryHub.fpsHistory) { TelemetryHub.fpsHistory.toList() }
             serviceRunning = running
             touchLocked = OverlayService.isTouchLocked
-            isRecording = TelemetryHub.isRecording
+            isRecording = nowRec
             recElapsedSec = TelemetryHub.getRecordingElapsedSec()
             shizukuBinderAlive = localMonitor.isShizukuBinderAlive()
             shizukuConnected = localMonitor.isShizukuReady()
@@ -271,7 +276,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 .border(1.dp, activeAccent.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
                                 .padding(horizontal = 6.dp, vertical = 1.dp)
                         ) {
-                            Text("PRO 2.5", color = activeAccent, fontSize = 9.5.sp, fontWeight = FontWeight.ExtraBold)
+                            Text("PRO 2.5.2", color = activeAccent, fontSize = 9.5.sp, fontWeight = FontWeight.ExtraBold)
                         }
                     }
                     Spacer(Modifier.height(4.dp))
@@ -848,7 +853,9 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 pushOverlayUpdate()
                             }
                             ToggleRow("Kunci Sentuhan (Touch-Through)", touchLocked, activeAccent) {
-                                if (OverlayService.isRunning && OverlayService.isTouchLocked != it) {
+                                if (!OverlayService.isRunning) {
+                                    Toast.makeText(context, "Nyalakan START HUD dulu untuk mengunci sentuhan", Toast.LENGTH_SHORT).show()
+                                } else if (OverlayService.isTouchLocked != it) {
                                     context.startService(Intent(context, OverlayService::class.java).apply {
                                         action = OverlayService.ACTION_TOGGLE_LOCK
                                     })
@@ -965,7 +972,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 onClick = {
                                     try {
                                         if (!Shizuku.pingBinder()) {
-                                            Toast.makeText(context, "Service Shizuku belum berjalan. Buka aplikasi Shizuku dan jalankan dulu.", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, "Binder belum masuk. Tutup FramePulse dari Recent Apps lalu buka ulang (pastikan Shizuku running).", Toast.LENGTH_LONG).show()
                                         } else if (Shizuku.isPreV11()) {
                                             Toast.makeText(context, "Versi Shizuku terlalu lama. Update Shizuku dulu.", Toast.LENGTH_LONG).show()
                                         } else if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {

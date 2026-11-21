@@ -93,6 +93,7 @@ class OverlayService : Service() {
                             renderTelemetry(data)
                         }
                     }
+                } catch (_: Throwable) {
                 } finally {
                     isCollecting.set(false)
                     if (isRunning) {
@@ -292,6 +293,7 @@ class OverlayService : Service() {
             gravity = Gravity.TOP or Gravity.START
             x = Prefs.posX
             y = Prefs.posY
+            alpha = 1.0f
         }
 
         var initialX = 0
@@ -387,7 +389,7 @@ class OverlayService : Service() {
         fun dp(v: Int) = (v * density).toInt()
 
         val style = Prefs.hudStyle
-        val alpha = if (style == Prefs.STYLE_MINIMAL) 0 else Prefs.bgAlpha
+        val alphaVal = if (style == Prefs.STYLE_MINIMAL) 0 else Prefs.bgAlpha
         val accent = getThemeAccent()
 
         when (style) {
@@ -405,9 +407,9 @@ class OverlayService : Service() {
             }
         }
 
-        bgDrawable?.setColor(Color.argb(alpha, 9, 14, 26))
-        if (alpha > 20) {
-            val strokeAlpha = (alpha * 0.6f).toInt().coerceIn(0, 255)
+        bgDrawable?.setColor(Color.argb(alphaVal, 9, 14, 26))
+        if (alphaVal > 20) {
+            val strokeAlpha = (alphaVal * 0.6f).toInt().coerceIn(0, 255)
             bgDrawable?.setStroke(
                 dp(1),
                 Color.argb(strokeAlpha, Color.red(accent), Color.green(accent), Color.blue(accent))
@@ -445,11 +447,14 @@ class OverlayService : Service() {
             layoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+            // Android 12+ requires window alpha <= 0.8f so system does not block pass-through game touches
+            layoutParams.alpha = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) 0.78f else 1.0f
         } else {
             recBtnView?.text = if (TelemetryHub.isRecording) "STOP" else "REC"
             quickActionRow?.visibility = if (Prefs.showQuickButtons) View.VISIBLE else View.GONE
             layoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+            layoutParams.alpha = 1.0f
         }
         rootContainer?.let {
             try {
