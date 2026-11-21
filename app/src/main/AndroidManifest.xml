@@ -11,20 +11,13 @@
     </queries>
 
     <application
+        android:name=".FramePulseApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="FramePulse"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
-
-        <provider
-            android:name="rikka.shizuku.ShizukuProvider"
-            android:authorities="${applicationId}.shizuku"
-            android:multiprocess="false"
-            android:enabled="true"
-            android:exported="true"
-             />
 
         <activity
             android:name=".MainActivity"
@@ -34,6 +27,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".CrashActivity"
+            android:exported="false"
+            android:process=":crash" />
 
         <service
             android:name=".OverlayService"

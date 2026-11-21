@@ -1,6 +1,9 @@
 package com.shin.framepulse
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -29,6 +32,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -68,7 +72,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
-import rikka.shizuku.ShizukuProvider
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -79,24 +82,20 @@ class MainActivity : ComponentActivity() {
     ) { }
 
     private val shizukuListener = Shizuku.OnRequestPermissionResultListener { _, grantResult ->
-        if (grantResult == PackageManager.PERMISSION_GRANTED) {
-            Toast.makeText(this, "Shizuku aktif: True Game FPS siap!", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
-        if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-            Shizuku.requestPermission(100)
+        runOnUiThread {
+            if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(this, "Shizuku aktif: True Game FPS & SELinux Sensors siap!", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "Izin Shizuku ditolak", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Prefs.init(this)
-        Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
-        Shizuku.addRequestPermissionResultListener(shizukuListener)
         try {
-            ShizukuProvider.requestBinderForNonProviderProcess(this)
+            Shizuku.addRequestPermissionResultListener(shizukuListener)
         } catch (_: Throwable) {}
 
         setContent {
@@ -121,8 +120,9 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        Shizuku.removeBinderReceivedListener(binderReceivedListener)
-        Shizuku.removeRequestPermissionResultListener(shizukuListener)
+        try {
+            Shizuku.removeRequestPermissionResultListener(shizukuListener)
+        } catch (_: Throwable) {}
         super.onDestroy()
     }
 }
@@ -140,17 +140,23 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
     var overlayGranted by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var serviceRunning by remember { mutableStateOf(OverlayService.isRunning) }
     var touchLocked by remember { mutableStateOf(OverlayService.isTouchLocked) }
+    var shizukuBinderAlive by remember { mutableStateOf(false) }
     var shizukuConnected by remember { mutableStateOf(false) }
 
     var isRecording by remember { mutableStateOf(TelemetryHub.isRecording) }
-    var lastBenchmark by remember { mutableStateOf(TelemetryHub.lastSummary) }
+    var recElapsedSec by remember { mutableIntStateOf(TelemetryHub.getRecordingElapsedSec()) }
+    var benchmarkHistory by remember { mutableStateOf(TelemetryHub.loadHistory()) }
+    var lastCrashLog by remember { mutableStateOf(Prefs.lastCrashLog) }
 
     var layoutMode by remember { mutableStateOf(Prefs.layoutMode) }
+    var hudStyle by remember { mutableStateOf(Prefs.hudStyle) }
     var themeMode by remember { mutableStateOf(Prefs.themeMode) }
     var bgAlpha by remember { mutableIntStateOf(Prefs.bgAlpha) }
     var textSizeSp by remember { mutableFloatStateOf(Prefs.textSizeSp) }
     var intervalMs by remember { mutableLongStateOf(Prefs.updateIntervalMs) }
+    var graphMaxFps by remember { mutableIntStateOf(Prefs.graphMaxFps) }
     var showHudGraph by remember { mutableStateOf(Prefs.showHudGraph) }
+    var snapToEdge by remember { mutableStateOf(Prefs.snapToEdge) }
 
     var sFps by remember { mutableStateOf(Prefs.showFps) }
     var sFrameTime by remember { mutableStateOf(Prefs.showFrameTime) }
@@ -159,12 +165,14 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
     var sGpu by remember { mutableStateOf(Prefs.showGpu) }
     var sRam by remember { mutableStateOf(Prefs.showRam) }
     var sTemp by remember { mutableStateOf(Prefs.showTemp) }
+    var sBatt by remember { mutableStateOf(Prefs.showBatteryPct) }
     var sWatt by remember { mutableStateOf(Prefs.showWatt) }
     var sNet by remember { mutableStateOf(Prefs.showNet) }
 
     val activeAccent = when (themeMode) {
         Prefs.THEME_EMERALD -> EmeraldNeon
         Prefs.THEME_CRIMSON -> CrimsonAccent
+        Prefs.THEME_AMBER -> AmberVolt
         else -> CyberCyan
     }
 
@@ -192,7 +200,10 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     overlayGranted = Settings.canDrawOverlays(context)
                     serviceRunning = OverlayService.isRunning
                     touchLocked = OverlayService.isTouchLocked
+                    shizukuBinderAlive = localMonitor.isShizukuBinderAlive()
                     shizukuConnected = localMonitor.isShizukuReady()
+                    benchmarkHistory = TelemetryHub.loadHistory()
+                    lastCrashLog = Prefs.lastCrashLog
                     if (OverlayService.isRunning) localMonitor.stop() else localMonitor.start()
                 }
                 Lifecycle.Event.ON_STOP -> {
@@ -224,23 +235,27 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
             serviceRunning = running
             touchLocked = OverlayService.isTouchLocked
             isRecording = TelemetryHub.isRecording
-            lastBenchmark = TelemetryHub.lastSummary
+            recElapsedSec = TelemetryHub.getRecordingElapsedSec()
+            shizukuBinderAlive = localMonitor.isShizukuBinderAlive()
             shizukuConnected = localMonitor.isShizukuReady()
             delay(500L)
         }
     }
+
+    val effectiveGraphMax = if (graphMaxFps > 0) graphMaxFps else telemetry.displayRefreshHz
+
     Scaffold(
         containerColor = BgObsidian,
         topBar = {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF0A101D))
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                    .background(TopBarSurface)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = "FramePulse",
@@ -251,17 +266,23 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                         Spacer(Modifier.width(6.dp))
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(5.dp))
+                                .clip(RoundedCornerShape(6.dp))
                                 .background(activeAccent.copy(alpha = 0.2f))
+                                .border(1.dp, activeAccent.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
                                 .padding(horizontal = 6.dp, vertical = 1.dp)
                         ) {
-                            Text("PRO", color = activeAccent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text("PRO 2.5", color = activeAccent, fontSize = 9.5.sp, fontWeight = FontWeight.ExtraBold)
                         }
                     }
-                    Text(
-                        text = if (shizukuConnected) "Engine: SurfaceFlinger True FPS" else "Engine: Standard Sensor Mode",
-                        color = if (shizukuConnected) EmeraldNeon else TextSecondary,
-                        fontSize = 11.sp
+                    Spacer(Modifier.height(4.dp))
+                    val engineText = when {
+                        telemetry.isTrueGameFps && telemetry.activeSurfaceName.isNotBlank() -> "SF • ${telemetry.activeSurfaceName}"
+                        shizukuConnected -> "Shizuku Ready • ${telemetry.displayRefreshHz}Hz"
+                        else -> "Standard • ${telemetry.displayRefreshHz}Hz"
+                    }
+                    StatusDotPill(
+                        label = engineText,
+                        color = if (shizukuConnected) EmeraldNeon else TextSecondary
                     )
                 }
 
@@ -307,34 +328,32 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
         },
         bottomBar = {
             NavigationBar(
-                containerColor = Color(0xFF0A101D),
+                containerColor = TopBarSurface,
                 tonalElevation = 0.dp
             ) {
                 val tabs = listOf("Monitor", "HUD Studio", "Sensors", "Setup")
                 tabs.forEachIndexed { idx, label ->
+                    val selected = selectedTab == idx
                     NavigationBarItem(
-                        selected = selectedTab == idx,
+                        selected = selected,
                         onClick = { selectedTab = idx },
                         icon = {
-                            val badgeChar = when (idx) {
-                                0 -> "⚡"
-                                1 -> "🎛"
-                                2 -> "📊"
-                                else -> "⚙"
-                            }
-                            Text(badgeChar, fontSize = 16.sp)
+                            NavVectorIcon(
+                                index = idx,
+                                tint = if (selected) activeAccent else TextSecondary
+                            )
                         },
                         label = {
                             Text(
                                 text = label,
                                 fontSize = 11.sp,
-                                fontWeight = if (selectedTab == idx) FontWeight.Bold else FontWeight.Normal
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
                             )
                         },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = activeAccent,
                             selectedTextColor = activeAccent,
-                            indicatorColor = activeAccent.copy(alpha = 0.15f),
+                            indicatorColor = activeAccent.copy(alpha = 0.14f),
                             unselectedIconColor = TextSecondary,
                             unselectedTextColor = TextSecondary
                         )
@@ -368,8 +387,12 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 Row(verticalAlignment = Alignment.Bottom) {
                                     Text(
                                         text = "${telemetry.fps}",
-                                        color = if (telemetry.fps >= 50) EmeraldNeon else AmberVolt,
-                                        fontSize = 42.sp,
+                                        color = when {
+                                            telemetry.fps >= 50 -> EmeraldNeon
+                                            telemetry.fps >= 30 -> AmberVolt
+                                            else -> CrimsonAccent
+                                        },
+                                        fontSize = 46.sp,
                                         fontWeight = FontWeight.Black,
                                         fontFamily = FontFamily.Monospace
                                     )
@@ -378,37 +401,51 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                         color = TextSecondary,
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(bottom = 8.dp)
+                                        modifier = Modifier.padding(bottom = 9.dp)
                                     )
                                 }
                                 Column(horizontalAlignment = Alignment.End) {
                                     Text(
                                         text = String.format(Locale.US, "%.1f ms", telemetry.frameTimeMs),
                                         color = TextPrimary,
-                                        fontSize = 18.sp,
+                                        fontSize = 19.sp,
                                         fontWeight = FontWeight.Bold,
                                         fontFamily = FontFamily.Monospace
                                     )
-                                    Text("Frame Time", color = TextSecondary, fontSize = 11.sp)
+                                    Text(
+                                        text = "Target ${telemetry.displayRefreshHz}Hz",
+                                        color = TextSecondary,
+                                        fontSize = 11.sp
+                                    )
                                 }
                             }
                             Spacer(Modifier.height(10.dp))
-                            ComposeSparkline(points = fpsHistory, accent = activeAccent)
+                            ComposeSparkline(
+                                points = fpsHistory,
+                                accent = activeAccent,
+                                maxScaleFps = effectiveGraphMax
+                            )
                         }
                     }
 
                     item {
                         CyberCard {
+                            val recBadge = if (isRecording) {
+                                String.format(Locale.US, "● REC %02d:%02d", recElapsedSec / 60, recElapsedSec % 60)
+                            } else {
+                                "READY"
+                            }
                             SectionTitle(
                                 title = "SESSION BENCHMARK RECORDER",
-                                badge = if (isRecording) "● RECORDING" else "READY",
+                                badge = recBadge,
                                 accent = if (isRecording) CrimsonAccent else EmeraldNeon
                             )
                             Button(
                                 onClick = {
                                     if (isRecording) {
-                                        lastBenchmark = TelemetryHub.stopRecording()
+                                        TelemetryHub.stopRecording()
                                         isRecording = false
+                                        benchmarkHistory = TelemetryHub.loadHistory()
                                     } else {
                                         TelemetryHub.startRecording()
                                         isRecording = true
@@ -422,34 +459,88 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 )
                             ) {
                                 Text(
-                                    text = if (isRecording) "STOP & HITUNG HASIL BENCHMARK" else "MULAI REKAM SESI GAME (AVG & 1% LOW)",
-                                    color = TextPrimary,
-                                    fontWeight = FontWeight.Bold,
+                                    text = if (isRecording) "STOP & SIMPAN HASIL BENCHMARK" else "MULAI REKAM SESI GAME (TRUE 1% LOW)",
+                                    color = if (isRecording) Color.Black else TextPrimary,
+                                    fontWeight = FontWeight.ExtraBold,
                                     fontSize = 12.sp
                                 )
                             }
 
-                            lastBenchmark?.let { res ->
-                                Spacer(Modifier.height(10.dp))
+                            val latestRes = benchmarkHistory.firstOrNull()
+                            if (latestRes != null) {
+                                Spacer(Modifier.height(12.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    MetricMiniCol("AVG FPS", String.format(Locale.US, "%.1f", res.avgFps), EmeraldNeon)
-                                    MetricMiniCol("1% LOW", "${res.onePercentLowFps}", AmberVolt)
-                                    MetricMiniCol("MIN/MAX", "${res.minFps}/${res.maxFps}", CyberCyan)
-                                    MetricMiniCol("PEAK °C", String.format(Locale.US, "%.1f°", res.peakTempC), CrimsonAccent)
+                                    MetricMiniCol("AVG FPS", String.format(Locale.US, "%.1f", latestRes.avgFps), EmeraldNeon)
+                                    MetricMiniCol("1% LOW", "${latestRes.onePercentLowFps}", AmberVolt)
+                                    MetricMiniCol("MIN/MAX", "${latestRes.minFps}/${latestRes.maxFps}", CyberCyan)
+                                    MetricMiniCol("PEAK °C", String.format(Locale.US, "%.1f°", latestRes.peakTempC), CrimsonAccent)
+                                }
+                            }
+
+                            if (benchmarkHistory.size > 1) {
+                                Spacer(Modifier.height(12.dp))
+                                HorizontalDivider(color = CardBorder)
+                                Spacer(Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("RIWAYAT SESI (${benchmarkHistory.size})", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        text = "Hapus Semua",
+                                        color = CrimsonAccent,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.clickable {
+                                            TelemetryHub.clearHistory()
+                                            benchmarkHistory = emptyList()
+                                        }
+                                    )
+                                }
+                                Spacer(Modifier.height(6.dp))
+                                benchmarkHistory.take(4).forEach { s ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 3.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "${s.timestamp} (${s.durationSec}s • ${s.sourceLabel})",
+                                            color = TextSecondary,
+                                            fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                        Text(
+                                            text = String.format(Locale.US, "AVG %.1f | 1%% %d", s.avgFps, s.onePercentLowFps),
+                                            color = TextPrimary,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
+
                     item {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             CyberCard(modifier = Modifier.weight(1f)) {
-                                Text("CPU & GPU LOAD", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("CPU & GPU", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    Text(telemetry.cpuSource, color = activeAccent, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+                                }
                                 Spacer(Modifier.height(4.dp))
                                 Text(
                                     text = "CPU ${telemetry.cpuLoadPercent}%",
@@ -459,18 +550,28 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     fontFamily = FontFamily.Monospace
                                 )
                                 Text(
-                                    text = "GPU ${telemetry.gpuLoadPercent?.let { "$it%" } ?: "N/A"} • ${String.format(Locale.US, "%.2f", telemetry.cpuMaxGhz)}GHz",
+                                    text = "GPU ${telemetry.gpuLoadPercent?.let { "$it%" } ?: "N/A"} • ${String.format(Locale.US, "%.2f", telemetry.cpuMaxGhz)}G",
                                     color = PurpleGpu,
                                     fontSize = 11.sp,
                                     fontFamily = FontFamily.Monospace
                                 )
                             }
                             CyberCard(modifier = Modifier.weight(1f)) {
-                                Text("THERMAL & POWER", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("THERMAL", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    Text("BAT ${telemetry.batteryPercent}%", color = EmeraldNeon, fontSize = 9.5.sp, fontFamily = FontFamily.Monospace)
+                                }
                                 Spacer(Modifier.height(4.dp))
                                 Text(
                                     text = String.format(Locale.US, "%.1f °C", telemetry.batteryTempC),
-                                    color = if (telemetry.batteryTempC >= 42f) CrimsonAccent else CyberCyan,
+                                    color = when {
+                                        telemetry.batteryTempC >= 42f -> CrimsonAccent
+                                        telemetry.batteryTempC >= 38f -> AmberVolt
+                                        else -> CyberCyan
+                                    },
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.Bold,
                                     fontFamily = FontFamily.Monospace
@@ -505,7 +606,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 LinearProgressIndicator(
                                     progress = { ramRatio },
                                     modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(4.dp)),
-                                    color = Color(0xFFF472B6),
+                                    color = PinkRam,
                                     trackColor = Color(0xFF1E293B)
                                 )
                             }
@@ -532,7 +633,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     if (telemetry.cores.isNotEmpty()) {
                         item {
                             CyberCard {
-                                SectionTitle("8-CORE CPU FREQUENCY MATRIX", "BIG.LITTLE", activeAccent)
+                                SectionTitle("CPU FREQUENCY MATRIX", "${telemetry.cores.size} CORES", activeAccent)
                                 telemetry.cores.chunked(2).forEach { pair ->
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -545,7 +646,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                                     horizontalArrangement = Arrangement.SpaceBetween
                                                 ) {
                                                     Text(
-                                                        text = "C${core.coreIndex} ${if (core.isBigCore) "A76" else "A55"}",
+                                                        text = "C${core.coreIndex} ${if (core.isBigCore) "BIG" else "EFF"}",
                                                         color = if (core.isBigCore) AmberVolt else TextSecondary,
                                                         fontSize = 10.sp,
                                                         fontWeight = FontWeight.Bold,
@@ -577,40 +678,57 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                 1 -> {
                     item {
                         CyberCard(borderColor = activeAccent.copy(alpha = 0.5f)) {
-                            SectionTitle("LIVE HUD PREVIEW", layoutMode, activeAccent)
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(Color(0xFF04070D))
-                                    .padding(14.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(Color(0xFF090E1A).copy(alpha = bgAlpha / 255f))
-                                        .border(
-                                            1.dp,
-                                            if (bgAlpha > 20) activeAccent.copy(alpha = 0.5f) else Color.Transparent,
-                                            RoundedCornerShape(8.dp)
-                                        )
-                                        .padding(horizontal = 10.dp, vertical = 6.dp)
-                                ) {
-                                    Text(
-                                        text = "FPS ${telemetry.fps} │ CPU ${telemetry.cpuLoadPercent}% │ ${String.format(Locale.US, "%.1f°C", telemetry.batteryTempC)}",
-                                        color = activeAccent,
-                                        fontSize = textSizeSp.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
+                            SectionTitle("LIVE HUD PREVIEW (1:1)", "$hudStyle • $layoutMode", activeAccent)
+                            HudLivePreviewBox(
+                                telemetry = telemetry,
+                                fpsHistory = fpsHistory,
+                                layoutMode = layoutMode,
+                                hudStyle = hudStyle,
+                                accent = activeAccent,
+                                bgAlpha = bgAlpha,
+                                textSizeSp = textSizeSp,
+                                showHudGraph = showHudGraph,
+                                sFps = sFps,
+                                sFrameTime = sFrameTime,
+                                sCpu = sCpu,
+                                sClock = sClock,
+                                sGpu = sGpu,
+                                sRam = sRam,
+                                sTemp = sTemp,
+                                sBatt = sBatt,
+                                sWatt = sWatt,
+                                sNet = sNet,
+                                maxScaleFps = effectiveGraphMax
+                            )
                         }
                     }
+
                     item {
                         CyberCard {
-                            SectionTitle("BENTUK & TEMA WARNA HUD")
+                            SectionTitle("GAYA, LAYOUT & TEMA WARNA")
+                            Text("Gaya Kotak HUD", color = TextSecondary, fontSize = 11.sp)
+                            Spacer(Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(
+                                    Prefs.STYLE_GLASS to "Glass Card",
+                                    Prefs.STYLE_PILL to "Esports Pill",
+                                    Prefs.STYLE_MINIMAL to "Minimal"
+                                ).forEach { (key, label) ->
+                                    PillChip(
+                                        label = label,
+                                        selected = hudStyle == key,
+                                        accent = activeAccent,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        hudStyle = key
+                                        Prefs.hudStyle = key
+                                        pushOverlayUpdate()
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            Text("Susunan Data", color = TextSecondary, fontSize = 11.sp)
+                            Spacer(Modifier.height(6.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 listOf(
                                     Prefs.LAYOUT_HORIZONTAL to "Horizontal",
@@ -630,11 +748,14 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 }
                             }
                             Spacer(Modifier.height(10.dp))
+                            Text("Aksen Warna", color = TextSecondary, fontSize = 11.sp)
+                            Spacer(Modifier.height(6.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 listOf(
                                     Triple(Prefs.THEME_CYBER, "Cyber", CyberCyan),
                                     Triple(Prefs.THEME_EMERALD, "Emerald", EmeraldNeon),
-                                    Triple(Prefs.THEME_CRIMSON, "Crimson", CrimsonAccent)
+                                    Triple(Prefs.THEME_CRIMSON, "Crimson", CrimsonAccent),
+                                    Triple(Prefs.THEME_AMBER, "Volt", AmberVolt)
                                 ).forEach { (key, label, col) ->
                                     PillChip(
                                         label = label,
@@ -653,9 +774,9 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
 
                     item {
                         CyberCard {
-                            SectionTitle("TRANSPARANSI, UKURAN & REFRESH")
+                            SectionTitle("TRANSPARANSI, SKALA & KONTROL")
                             val pct = ((bgAlpha / 255f) * 100).roundToInt()
-                            Text("Opacity Background: $pct% (0% = Teks Melayang Tanpa Kotak)", color = TextSecondary, fontSize = 12.sp)
+                            Text("Opacity Background: $pct%", color = TextSecondary, fontSize = 12.sp)
                             Slider(
                                 value = bgAlpha.toFloat(),
                                 onValueChange = {
@@ -680,8 +801,10 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             )
 
                             Spacer(Modifier.height(6.dp))
+                            Text("Kecepatan Update", color = TextSecondary, fontSize = 11.sp)
+                            Spacer(Modifier.height(6.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                listOf(250L to "0.25s (Cepat)", 500L to "0.5s (Normal)", 1000L to "1.0s (Hemat)").forEach { (ms, lbl) ->
+                                listOf(250L to "0.25s", 500L to "0.5s", 1000L to "1.0s").forEach { (ms, lbl) ->
                                     PillChip(
                                         label = lbl,
                                         selected = intervalMs == ms,
@@ -696,12 +819,35 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             }
 
                             Spacer(Modifier.height(10.dp))
-                            ToggleRow("Tampilkan Grafik Mini di dalam HUD", showHudGraph, activeAccent) {
+                            Text("Skala Maks Grafik FPS", color = TextSecondary, fontSize = 11.sp)
+                            Spacer(Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(0 to "Auto", 60 to "60", 90 to "90", 120 to "120").forEach { (cap, lbl) ->
+                                    PillChip(
+                                        label = lbl,
+                                        selected = graphMaxFps == cap,
+                                        accent = activeAccent,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        graphMaxFps = cap
+                                        Prefs.graphMaxFps = cap
+                                        pushOverlayUpdate()
+                                    }
+                                }
+                            }
+
+                            Spacer(Modifier.height(10.dp))
+                            ToggleRow("Grafik Mini di dalam HUD", showHudGraph, activeAccent) {
                                 showHudGraph = it
                                 Prefs.showHudGraph = it
                                 pushOverlayUpdate()
                             }
-                            ToggleRow("Kunci Sentuhan HUD (Touch-Through ke Game)", touchLocked, activeAccent) {
+                            ToggleRow("Snap Otomatis ke Tepi Layar", snapToEdge, activeAccent) {
+                                snapToEdge = it
+                                Prefs.snapToEdge = it
+                                pushOverlayUpdate()
+                            }
+                            ToggleRow("Kunci Sentuhan (Touch-Through)", touchLocked, activeAccent) {
                                 if (OverlayService.isRunning && OverlayService.isTouchLocked != it) {
                                     context.startService(Intent(context, OverlayService::class.java).apply {
                                         action = OverlayService.ACTION_TOGGLE_LOCK
@@ -711,31 +857,32 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             }
                         }
                     }
+
                     item {
                         val dm = context.resources.displayMetrics
                         CyberCard {
-                            SectionTitle("PRESET POSISI LAYAR (ATAU GESER MANUAL)")
+                            SectionTitle("PRESET POSISI LAYAR")
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 PillChip("Kiri Atas", false, activeAccent, Modifier.weight(1f)) {
-                                    Prefs.posX = 24; Prefs.posY = 42; pushOverlayUpdate()
+                                    Prefs.posX = 20; Prefs.posY = 48; pushOverlayUpdate()
                                 }
                                 PillChip("Tengah Atas", false, activeAccent, Modifier.weight(1f)) {
-                                    Prefs.posX = (dm.widthPixels * 0.35f).toInt(); Prefs.posY = 42; pushOverlayUpdate()
+                                    Prefs.posX = (dm.widthPixels * 0.34f).toInt(); Prefs.posY = 48; pushOverlayUpdate()
                                 }
                                 PillChip("Kanan Atas", false, activeAccent, Modifier.weight(1f)) {
-                                    Prefs.posX = (dm.widthPixels * 0.65f).toInt(); Prefs.posY = 42; pushOverlayUpdate()
+                                    Prefs.posX = (dm.widthPixels * 0.68f).toInt(); Prefs.posY = 48; pushOverlayUpdate()
                                 }
                             }
                             Spacer(Modifier.height(8.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 PillChip("Kiri Bawah", false, activeAccent, Modifier.weight(1f)) {
-                                    Prefs.posX = 24; Prefs.posY = (dm.heightPixels * 0.85f).toInt(); pushOverlayUpdate()
+                                    Prefs.posX = 20; Prefs.posY = (dm.heightPixels * 0.85f).toInt(); pushOverlayUpdate()
                                 }
                                 PillChip("Tengah Bawah", false, activeAccent, Modifier.weight(1f)) {
-                                    Prefs.posX = (dm.widthPixels * 0.35f).toInt(); Prefs.posY = (dm.heightPixels * 0.85f).toInt(); pushOverlayUpdate()
+                                    Prefs.posX = (dm.widthPixels * 0.34f).toInt(); Prefs.posY = (dm.heightPixels * 0.85f).toInt(); pushOverlayUpdate()
                                 }
                                 PillChip("Kanan Bawah", false, activeAccent, Modifier.weight(1f)) {
-                                    Prefs.posX = (dm.widthPixels * 0.65f).toInt(); Prefs.posY = (dm.heightPixels * 0.85f).toInt(); pushOverlayUpdate()
+                                    Prefs.posX = (dm.widthPixels * 0.68f).toInt(); Prefs.posY = (dm.heightPixels * 0.85f).toInt(); pushOverlayUpdate()
                                 }
                             }
                         }
@@ -745,16 +892,23 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                 2 -> {
                     item {
                         CyberCard {
-                            SectionTitle("PILIH DATA SENSOR DI OVERLAY")
-                            ToggleRow("FPS (Frame Per Second)", sFps, activeAccent) { sFps = it; Prefs.showFps = it; pushOverlayUpdate() }
-                            ToggleRow("Frame Time (ms)", sFrameTime, activeAccent) { sFrameTime = it; Prefs.showFrameTime = it; pushOverlayUpdate() }
-                            ToggleRow("CPU Total Load (%)", sCpu, activeAccent) { sCpu = it; Prefs.showCpu = it; pushOverlayUpdate() }
-                            ToggleRow("CPU Peak Clock (GHz)", sClock, activeAccent) { sClock = it; Prefs.showClock = it; pushOverlayUpdate() }
-                            ToggleRow("GPU Load (%)", sGpu, activeAccent) { sGpu = it; Prefs.showGpu = it; pushOverlayUpdate() }
-                            ToggleRow("RAM Terpakai (GB)", sRam, activeAccent) { sRam = it; Prefs.showRam = it; pushOverlayUpdate() }
-                            ToggleRow("Suhu Baterai (°C)", sTemp, activeAccent) { sTemp = it; Prefs.showTemp = it; pushOverlayUpdate() }
-                            ToggleRow("Konsumsi Daya (Watt)", sWatt, activeAccent) { sWatt = it; Prefs.showWatt = it; pushOverlayUpdate() }
-                            ToggleRow("Kecepatan Download (KB/s)", sNet, activeAccent) { sNet = it; Prefs.showNet = it; pushOverlayUpdate() }
+                            SectionTitle("SENSOR FRAME & PERFORMA")
+                            SensorToggleRow("FPS (Frame Per Second)", "${telemetry.fps} FPS", sFps, activeAccent) { sFps = it; Prefs.showFps = it; pushOverlayUpdate() }
+                            SensorToggleRow("Frame Time", String.format(Locale.US, "%.1f ms", telemetry.frameTimeMs), sFrameTime, activeAccent) { sFrameTime = it; Prefs.showFrameTime = it; pushOverlayUpdate() }
+                            SensorToggleRow("CPU Total Load", "${telemetry.cpuLoadPercent}% (${telemetry.cpuSource})", sCpu, activeAccent) { sCpu = it; Prefs.showCpu = it; pushOverlayUpdate() }
+                            SensorToggleRow("CPU Peak Clock", String.format(Locale.US, "%.2f GHz", telemetry.cpuMaxGhz), sClock, activeAccent) { sClock = it; Prefs.showClock = it; pushOverlayUpdate() }
+                            SensorToggleRow("GPU Load", telemetry.gpuLoadPercent?.let { "$it%" } ?: "N/A", sGpu, activeAccent) { sGpu = it; Prefs.showGpu = it; pushOverlayUpdate() }
+                        }
+                    }
+
+                    item {
+                        CyberCard {
+                            SectionTitle("MEMORI, BATERAI & JARINGAN")
+                            SensorToggleRow("RAM Terpakai", String.format(Locale.US, "%.1f GB", telemetry.ramUsedGb), sRam, activeAccent) { sRam = it; Prefs.showRam = it; pushOverlayUpdate() }
+                            SensorToggleRow("Suhu Baterai", String.format(Locale.US, "%.1f °C", telemetry.batteryTempC), sTemp, activeAccent) { sTemp = it; Prefs.showTemp = it; pushOverlayUpdate() }
+                            SensorToggleRow("Persentase Baterai", "${telemetry.batteryPercent}%", sBatt, activeAccent) { sBatt = it; Prefs.showBatteryPct = it; pushOverlayUpdate() }
+                            SensorToggleRow("Konsumsi Daya", String.format(Locale.US, "%.1f W", telemetry.powerWatts), sWatt, activeAccent) { sWatt = it; Prefs.showWatt = it; pushOverlayUpdate() }
+                            SensorToggleRow("Kecepatan Download", "↓ ${telemetry.netDownKbps.toInt()} KB/s", sNet, activeAccent) { sNet = it; Prefs.showNet = it; pushOverlayUpdate() }
                         }
                     }
                 }
@@ -762,7 +916,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                 else -> {
                     item {
                         CyberCard {
-                            SectionTitle("1. IZIN FLOATING OVERLAY", if (overlayGranted) "AKTIF" else "WAJIB", activeAccent)
+                            SectionTitle("1. IZIN FLOATING OVERLAY", if (overlayGranted) "AKTIF" else "WAJIB", if (overlayGranted) EmeraldNeon else AmberVolt)
                             Text(
                                 text = "Diperlukan agar HUD FramePulse dapat melayang di atas game dan aplikasi lain.",
                                 color = TextSecondary,
@@ -786,21 +940,34 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
 
                     item {
                         CyberCard {
-                            SectionTitle("2. SHIZUKU BRIDGE (TRUE GAME FPS)", if (shizukuConnected) "TERHUBUNG" else "OPSIONAL", EmeraldNeon)
+                            SectionTitle("2. SHIZUKU BRIDGE (TRUE FPS & GPU)", if (shizukuConnected) "TERHUBUNG" else "OPSIONAL", if (shizukuConnected) EmeraldNeon else CyberCyan)
                             Text(
-                                text = "Menghubungkan ke SurfaceFlinger Android untuk membaca FPS asli game & 1% Low tanpa root.",
+                                text = "Menghubungkan ke SurfaceFlinger Android untuk membaca FPS asli game, True 1% Low, serta bypass blokir SELinux CPU/GPU tanpa root.",
                                 color = TextSecondary,
                                 fontSize = 12.sp
                             )
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                StatusDotPill(
+                                    label = if (shizukuBinderAlive) "Binder: OK" else "Binder: Off",
+                                    color = if (shizukuBinderAlive) EmeraldNeon else TextSecondary
+                                )
+                                StatusDotPill(
+                                    label = if (shizukuConnected) "Izin: Granted" else "Izin: Belum",
+                                    color = if (shizukuConnected) EmeraldNeon else AmberVolt
+                                )
+                            }
                             Spacer(Modifier.height(10.dp))
                             Button(
                                 onClick = {
                                     try {
                                         if (!Shizuku.pingBinder()) {
-                                            ShizukuProvider.requestBinderForNonProviderProcess(context)
-                                        }
-                                        if (!Shizuku.pingBinder()) {
-                                            Toast.makeText(context, "Binder Shizuku belum merespons. Pastikan Shizuku aktif lalu coba tap lagi.", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, "Service Shizuku belum berjalan. Buka aplikasi Shizuku dan jalankan dulu.", Toast.LENGTH_LONG).show()
+                                        } else if (Shizuku.isPreV11()) {
+                                            Toast.makeText(context, "Versi Shizuku terlalu lama. Update Shizuku dulu.", Toast.LENGTH_LONG).show()
                                         } else if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
                                             Shizuku.requestPermission(100)
                                         } else {
@@ -815,7 +982,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 shape = RoundedCornerShape(10.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0369A1))
                             ) {
-                                Text(if (shizukuConnected) "Shizuku Terhubung ✓" else "Hubungkan Izin Shizuku", color = TextPrimary)
+                                Text(if (shizukuConnected) "Shizuku Terhubung ✓" else "Hubungkan Izin Shizuku", color = TextPrimary, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -824,10 +991,57 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                         CyberCard {
                             SectionTitle("3. QUICK SETTINGS TILE (ONE UI)", "FITUR PRO", CyberCyan)
                             Text(
-                                text = "Tarik panel notifikasi Samsung dari atas layar -> tap ikon Pensil (Edit tombol) -> seret ubin 'FramePulse HUD' ke panel cepat agar bisa menyalakan/mematikan HUD kapan saja saat main game.",
+                                text = "Tarik panel notifikasi dari atas layar -> tap ikon Pensil (Edit tombol) -> seret ubin 'FramePulse HUD' ke panel cepat agar bisa menyalakan/mematikan HUD kapan saja saat main game.",
                                 color = TextSecondary,
                                 fontSize = 12.sp
                             )
+                        }
+                    }
+
+                    item {
+                        CyberCard {
+                            SectionTitle("4. DIAGNOSTIK & CRASH GUARD", if (lastCrashLog.isBlank()) "BERSIH" else "ADA LOG", if (lastCrashLog.isBlank()) EmeraldNeon else CrimsonAccent)
+                            Text(
+                                text = "${Build.MANUFACTURER} ${Build.MODEL} • Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) • ${telemetry.displayRefreshHz}Hz • ${Runtime.getRuntime().availableProcessors()} Cores",
+                                color = TextSecondary,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            if (lastCrashLog.isNotBlank()) {
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = lastCrashLog.lines().take(5).joinToString("\n"),
+                                    color = Color(0xFFFCA5A5),
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(
+                                        onClick = {
+                                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                            cm.setPrimaryClip(ClipData.newPlainText("FramePulse Crash", lastCrashLog))
+                                            Toast.makeText(context, "Log crash disalin", Toast.LENGTH_SHORT).show()
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = CyberCyan)
+                                    ) {
+                                        Text("Salin Log", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    }
+                                    Button(
+                                        onClick = {
+                                            Prefs.lastCrashLog = ""
+                                            lastCrashLog = ""
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))
+                                    ) {
+                                        Text("Hapus Log", color = TextPrimary, fontSize = 12.sp)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -855,6 +1069,28 @@ fun ToggleRow(label: String, checked: Boolean, accent: Color, onCheckedChange: (
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(label, color = TextPrimary, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = accent)
+        )
+    }
+}
+
+@Composable
+fun SensorToggleRow(label: String, liveValue: String, checked: Boolean, accent: Color, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text(liveValue, color = TextSecondary, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+        }
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,

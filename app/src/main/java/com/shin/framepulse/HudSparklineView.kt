@@ -3,6 +3,7 @@ package com.shin.framepulse
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
@@ -23,19 +24,27 @@ class HudSparklineView(context: Context) : View(context) {
         style = Paint.Style.FILL
     }
 
+    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
     private val refLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 1f
-        color = Color.argb(60, 255, 255, 255)
+        strokeWidth = 1.2f
+        color = Color.argb(65, 255, 255, 255)
+        pathEffect = DashPathEffect(floatArrayOf(6f, 6f), 0f)
     }
 
     private var points: List<Int> = emptyList()
     private var accentColor: Int = Color.parseColor("#38BDF8")
+    private var maxScaleFps: Int = 90
 
-    fun updateData(newPoints: List<Int>, themeColor: Int) {
+    fun updateData(newPoints: List<Int>, themeColor: Int, scaleMaxFps: Int = 90) {
         points = newPoints
         accentColor = themeColor
+        maxScaleFps = scaleMaxFps.coerceIn(60, 144)
         linePaint.color = themeColor
+        dotPaint.color = themeColor
         invalidate()
     }
 
@@ -45,20 +54,22 @@ class HudSparklineView(context: Context) : View(context) {
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
 
-        // Reference line at 60 FPS (assuming max scale 90 FPS for Galaxy A24)
-        val y60 = h * (1f - 60f / 90f)
-        canvas.drawLine(0f, y60, w, y60, refLinePaint)
+        val refFps = if (maxScaleFps <= 65) 30f else 60f
+        val yRef = h - ((refFps / maxScaleFps.toFloat()) * (h - 6f)) - 3f
+        canvas.drawLine(0f, yRef, w, yRef, refLinePaint)
 
         if (points.size < 2) return
 
         val strokePath = Path()
         val fillPath = Path()
-        val stepX = w / (points.size - 1).coerceAtLeast(1)
+        val stepX = (w - 4f) / (points.size - 1).coerceAtLeast(1)
+        var lastX = 0f
+        var lastY = h
 
         points.forEachIndexed { idx, fpsVal ->
-            val clamped = fpsVal.coerceIn(0, 90)
+            val clamped = fpsVal.coerceIn(0, maxScaleFps)
             val x = idx * stepX
-            val y = h - ((clamped / 90f) * (h - 6f)) - 3f
+            val y = h - ((clamped / maxScaleFps.toFloat()) * (h - 6f)) - 3f
             if (idx == 0) {
                 strokePath.moveTo(x, y)
                 fillPath.moveTo(x, h)
@@ -67,6 +78,8 @@ class HudSparklineView(context: Context) : View(context) {
                 strokePath.lineTo(x, y)
                 fillPath.lineTo(x, y)
             }
+            lastX = x
+            lastY = y
             if (idx == points.lastIndex) {
                 fillPath.lineTo(x, h)
                 fillPath.close()
@@ -81,5 +94,6 @@ class HudSparklineView(context: Context) : View(context) {
         )
         canvas.drawPath(fillPath, fillPaint)
         canvas.drawPath(strokePath, linePaint)
+        canvas.drawCircle(lastX, lastY, 3.2f, dotPaint)
     }
 }

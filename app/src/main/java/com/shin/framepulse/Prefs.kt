@@ -1,6 +1,7 @@
 package com.shin.framepulse
 
 import android.content.Context
+import android.content.SharedPreferences
 
 object Prefs {
     private const val PREF_NAME = "framepulse_pro_prefs"
@@ -9,21 +10,36 @@ object Prefs {
     const val LAYOUT_VERTICAL = "VERTICAL"
     const val LAYOUT_MINI = "MINI"
 
+    const val STYLE_GLASS = "GLASS"
+    const val STYLE_PILL = "PILL"
+    const val STYLE_MINIMAL = "MINIMAL"
+
     const val THEME_CYBER = "CYBER"
     const val THEME_EMERALD = "EMERALD"
     const val THEME_CRIMSON = "CRIMSON"
+    const val THEME_AMBER = "AMBER"
 
-    private lateinit var appCtx: Context
+    @Volatile
+    private var appCtx: Context? = null
 
     fun init(context: Context) {
-        appCtx = context.applicationContext
+        if (appCtx == null) {
+            appCtx = context.applicationContext
+        }
     }
 
-    private fun sp() = appCtx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+    private fun sp(): SharedPreferences {
+        val ctx = appCtx ?: throw IllegalStateException("Prefs.init() must be called first")
+        return ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+    }
 
     var layoutMode: String
         get() = sp().getString("layout_mode", LAYOUT_HORIZONTAL) ?: LAYOUT_HORIZONTAL
         set(v) = sp().edit().putString("layout_mode", v).apply()
+
+    var hudStyle: String
+        get() = sp().getString("hud_style", STYLE_GLASS) ?: STYLE_GLASS
+        set(v) = sp().edit().putString("hud_style", v).apply()
 
     var themeMode: String
         get() = sp().getString("theme_mode", THEME_CYBER) ?: THEME_CYBER
@@ -57,6 +73,10 @@ object Prefs {
         get() = sp().getBoolean("show_temp", true)
         set(v) = sp().edit().putBoolean("show_temp", v).apply()
 
+    var showBatteryPct: Boolean
+        get() = sp().getBoolean("show_battery_pct", false)
+        set(v) = sp().edit().putBoolean("show_battery_pct", v).apply()
+
     var showWatt: Boolean
         get() = sp().getBoolean("show_watt", false)
         set(v) = sp().edit().putBoolean("show_watt", v).apply()
@@ -69,8 +89,16 @@ object Prefs {
         get() = sp().getBoolean("show_hud_graph", true)
         set(v) = sp().edit().putBoolean("show_hud_graph", v).apply()
 
+    var snapToEdge: Boolean
+        get() = sp().getBoolean("snap_to_edge", true)
+        set(v) = sp().edit().putBoolean("snap_to_edge", v).apply()
+
+    var graphMaxFps: Int
+        get() = sp().getInt("graph_max_fps", 0) // 0 = Auto screen refresh rate
+        set(v) = sp().edit().putInt("graph_max_fps", v).apply()
+
     var bgAlpha: Int
-        get() = sp().getInt("bg_alpha", 165)
+        get() = sp().getInt("bg_alpha", 175)
         set(v) = sp().edit().putInt("bg_alpha", v.coerceIn(0, 255)).apply()
 
     var textSizeSp: Float
@@ -86,10 +114,23 @@ object Prefs {
         set(v) = sp().edit().putInt("pos_x", v).apply()
 
     var posY: Int
-        get() = sp().getInt("pos_y", 42)
+        get() = sp().getInt("pos_y", 48)
         set(v) = sp().edit().putInt("pos_y", v).apply()
 
     var showQuickButtons: Boolean
         get() = sp().getBoolean("show_quick_buttons", false)
         set(v) = sp().edit().putBoolean("show_quick_buttons", v).apply()
+
+    var lastCrashLog: String
+        get() = sp().getString("last_crash_log", "") ?: ""
+        set(v) = sp().edit().putString("last_crash_log", v).apply()
+
+    fun saveCrashLogSync(log: String) {
+        if (appCtx == null) return
+        sp().edit().putString("last_crash_log", log).commit()
+    }
+
+    var benchmarkHistoryRaw: String
+        get() = sp().getString("benchmark_history_raw", "") ?: ""
+        set(v) = sp().edit().putString("benchmark_history_raw", v).apply()
 }
