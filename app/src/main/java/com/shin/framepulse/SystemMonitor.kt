@@ -248,11 +248,13 @@ class SystemMonitor(private val context: Context) {
     private var shellReader: BufferedReader? = null
     private var activeGameLayer: String? = null
     private var activeSurfaceLabel: String = ""
+    private var activeForegroundPkg: String? = null
     private var lastLayerScanMs = 0L
     private var lastPresentNs = 0L
     private var lastSfQueryMs = 0L
     private var sfFps = 0
     private var sfFrameMs = 0f
+    private val pkgRegex = Regex("""\b([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)/""")
 
     private var lastCpuQueryMs = 0L
     private var cachedCpuLoad = 0
@@ -417,6 +419,7 @@ class SystemMonitor(private val context: Context) {
         shellProcess = null
         activeGameLayer = null
         activeSurfaceLabel = ""
+        activeForegroundPkg = null
     }
 
     private fun runShellCmd(cmd: String): List<String> = synchronized(shellLock) {
@@ -451,73 +454,207 @@ class SystemMonitor(private val context: Context) {
         return shortName.take(22)
     }
 
-    private fun querySurfaceFlingerFps(nowMs: Long, maxHz: Int): Boolean {
-        if (!ensureShell()) return false
-
-        if (activeGameLayer == null || nowMs - lastLayerScanMs >= 2500L) {
-            lastLayerScanMs = nowMs
-            val layers = runShellCmd("dumpsys SurfaceFlinger --list")
-            val excluded = listOf(
-                "Background for", "FramePulse", "NavigationBar", "StatusBar",
-                "ScreenDecor", "Wallpaper", "NotificationShade", "InputMethod",
-                "Taskbar", "Dim Layer", "Letterbox", "Transition", "Splash Screen",
-                "cocktailbarservice", "gametools", "systemui", "launcher",
-                "edgepanel", "smartcapture", "assist", "floating", "pip"
-            )
-            val validLayers = layers.filter { line ->
-                excluded.none { bad -> line.contains(bad, ignoreCase = true) }
+    private fun detectForegroundPackage(): String? {
+        val ignoredPkgs = setOf(
+            "com.shin.framepulse",
+            "com.android.systemui",
+            "com.sec.android.app.launcher",
+            "com.google.android.apps.nexuslauncher",
+            "com.samsung.android.app.cocktailbarservice",
+            "com.samsung.android.game.gametools"
+        )
+        fun extractPkg(lines: List<String>): String? {
+            for (line in lines) {
+                val match = pkgRegex.find(line) ?: continue
+                val pkg = match.groupValues[1]
+                if (pkg !in ignoredPkgs && !pkg.startsWith("com.android.systemui")) {
+                    return pkg
+                }
             }
-            // Prefer game SurfaceView layers first; fallback to generic BLAST only if no SurfaceView exists
-            val found = (
-                validLayers.lastOrNull { it.contains("SurfaceView") && it.contains("BLAST") }
-                    ?: validLayers.lastOrNull { it.contains("SurfaceView") }
-                    ?: validLayers.lastOrNull { it.contains("BLAST") }
-                )?.trim()
-
-            if (found != activeGameLayer) {
-                activeGameLayer = found
-                activeSurfaceLabel = found?.let { extractSurfaceLabel(it) } ?: ""
-                lastPresentNs = 0L
-                lastSfQueryMs = 0L
-            }
+            return null
         }
+        val winLines = runShellCmd("dumpsys window displays | grep -E 'mCurrentFocus|mFocusedApp'")
+        extractPkg(winLines)?.let { return it }
+        val actLines = runShellCmd("dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity'")
+        return extractPkg(actLines)
+    }
 
-        val layer = activeGameLayer ?: return false
-        val safeLayer = layer.replace("'", "'\\''")
-        val lines = runShellCmd("dumpsys SurfaceFlinger --latency '$safeLayer'")
-        if (lines.size < 3) {
-            activeGameLayer = null
-            activeSurfaceLabel = ""
-            return false
-        }
-
-        val validTimestamps = ArrayList<Long>(128)
+    private fun parseLatencyTimestamps(lines: List<String>): List<Long> {
+        if (lines.size < 3) return emptyList()
+        val raw = ArrayList<Long>(128)
         for (i in 1 until lines.size) {
             val parts = lines[i].split('\t')
             if (parts.size >= 2) {
                 val presentNs = parts[1].trim().toLongOrNull() ?: 0L
                 if (presentNs > 0L && presentNs < Long.MAX_VALUE / 2) {
-                    validTimestamps.add(presentNs)
+                    raw.add(presentNs)
                 }
             }
         }
+        if (raw.isEmpty()) return emptyList()
+        raw.sort()
+        val dedup = ArrayList<Long>(raw.size)
+        var prev = -1L
+        for (ts in raw) {
+            if (ts != prev) {
+                dedup.add(ts)
+                prev = ts
+            }
+        }
+        return dedup
+    }
 
-        if (validTimestamps.isEmpty()) return false
-        validTimestamps.sort()
+    private fun isExcludedLayer(line: String): Boolean {
+        val excluded = listOf(
+            "Background for", "Bounds for", "Container", "RelativeParent",
+            "FramePulse", "com.shin.framepulse", "NavigationBar", "StatusBar",
+            "ScreenDecor", "Wallpaper", "NotificationShade", "InputMethod",
+            "Taskbar", "Dim Layer", "Letterbox", "Transition", "Splash Screen",
+            "cocktailbarservice", "gametools", "systemui", "launcher",
+            "edgepanel", "smartcapture", "Screenshot", "Toast", "PopupWindow",
+            "assist", "floating", "pip"
+        )
+        return excluded.any { bad -> line.contains(bad, ignoreCase = true) }
+    }
+
+    private fun scanBestActiveLayer(): Pair<String, List<Long>>? {
+        val fgPkg = detectForegroundPackage()
+        activeForegroundPkg = fgPkg
+        val allLayers = runShellCmd("dumpsys SurfaceFlinger --list")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !isExcludedLayer(it) }
+        if (allLayers.isEmpty()) return null
+
+        val candidates = LinkedHashSet<String>()
+        if (fgPkg != null) {
+            allLayers.filter { it.contains(fgPkg) && it.contains("SurfaceView") && it.contains("BLAST") }.asReversed().forEach { candidates.add(it) }
+            allLayers.filter { it.contains(fgPkg) && it.contains("SurfaceView") }.asReversed().forEach { candidates.add(it) }
+            allLayers.filter { it.contains(fgPkg) && it.contains("BLAST") }.asReversed().forEach { candidates.add(it) }
+            allLayers.filter { it.contains(fgPkg) }.asReversed().forEach { candidates.add(it) }
+        }
+        allLayers.filter { it.contains("SurfaceView") && it.contains("BLAST") }.asReversed().forEach { candidates.add(it) }
+        allLayers.filter { it.contains("SurfaceView") }.asReversed().forEach { candidates.add(it) }
+        if (candidates.isEmpty()) {
+            allLayers.filter { it.contains("BLAST") }.asReversed().take(4).forEach { candidates.add(it) }
+        }
+
+        var bestLayer: String? = null
+        var bestTimestamps: List<Long> = emptyList()
+        var bestNewestNs = 0L
+        var bestIsFg = false
+
+        for (cand in candidates.take(8)) {
+            val safe = cand.replace("'", "'\\''")
+            val ts = parseLatencyTimestamps(runShellCmd("dumpsys SurfaceFlinger --latency '$safe'"))
+            if (ts.size < 2) continue
+            val newest = ts.last()
+            val isFg = fgPkg != null && cand.contains(fgPkg)
+            val isBetter = when {
+                bestLayer == null -> true
+                isFg && !bestIsFg -> newest >= bestNewestNs - 500_000_000L
+                !isFg && bestIsFg -> newest > bestNewestNs + 2_000_000_000L
+                else -> newest > bestNewestNs
+            }
+            if (isBetter) {
+                bestLayer = cand
+                bestTimestamps = ts
+                bestNewestNs = newest
+                bestIsFg = isFg
+                // Fast exit when a foreground SurfaceView layer already has dense recent timestamps
+                if (isFg && cand.contains("SurfaceView") && ts.size >= 10) break
+            }
+        }
+        return if (bestLayer != null) bestLayer to bestTimestamps else null
+    }
+
+    fun dumpSurfaceFlingerDiagnostics(): String {
+        if (!ensureShell()) return "Shizuku belum aktif / shell gagal dibuka."
+        return buildString {
+            val fg = detectForegroundPackage()
+            appendLine("Foreground Pkg: ${fg ?: "(none)"}")
+            appendLine("Locked Layer: ${activeGameLayer ?: "(none)"}")
+            appendLine("Display Hz: ${detectDisplayRefreshHz()}Hz")
+            appendLine("Last SF FPS: $sfFps (isTrue=${activeGameLayer != null})")
+            appendLine("--- Focus ---")
+            runShellCmd("dumpsys window displays | grep -E 'mCurrentFocus|mFocusedApp'").take(4).forEach { appendLine(it.trim()) }
+            appendLine("--- SurfaceFlinger Layers (filtered) ---")
+            val layers = runShellCmd("dumpsys SurfaceFlinger --list")
+                .map { it.trim() }
+                .filter { it.contains("SurfaceView") || it.contains("BLAST") || (fg != null && it.contains(fg)) }
+            layers.takeLast(15).forEach { appendLine(it) }
+            activeGameLayer?.let { layer ->
+                appendLine("--- Latency Sample ---")
+                val safe = layer.replace("'", "'\\''")
+                runShellCmd("dumpsys SurfaceFlinger --latency '$safe'").take(8).forEach { appendLine(it) }
+            }
+        }
+    }
+
+    private fun querySurfaceFlingerFps(nowMs: Long, maxHz: Int): Boolean {
+        if (!ensureShell()) return false
+
+        var validTimestamps: List<Long>? = null
+        val staleScan = activeGameLayer == null ||
+            nowMs - lastLayerScanMs >= 3000L ||
+            (lastSfQueryMs > 0L && nowMs - lastSfQueryMs >= 2000L)
+
+        if (staleScan) {
+            lastLayerScanMs = nowMs
+            val scanned = scanBestActiveLayer()
+            if (scanned != null) {
+                val (foundLayer, foundTs) = scanned
+                if (foundLayer != activeGameLayer) {
+                    activeGameLayer = foundLayer
+                    activeSurfaceLabel = extractSurfaceLabel(foundLayer)
+                    lastPresentNs = 0L
+                    lastSfQueryMs = 0L
+                }
+                validTimestamps = foundTs
+            } else {
+                activeGameLayer = null
+                activeSurfaceLabel = ""
+                return false
+            }
+        }
+
+        val layer = activeGameLayer ?: return false
+        if (validTimestamps == null) {
+            val safeLayer = layer.replace("'", "'\\''")
+            validTimestamps = parseLatencyTimestamps(runShellCmd("dumpsys SurfaceFlinger --latency '$safeLayer'"))
+            if (validTimestamps.isEmpty()) {
+                activeGameLayer = null
+                activeSurfaceLabel = ""
+                return false
+            }
+        }
+
         val newestNs = validTimestamps.last()
 
-        if (lastPresentNs == 0L || newestNs <= lastPresentNs) {
-            if (lastSfQueryMs > 0L && nowMs - lastSfQueryMs > 1200L) {
-                sfFps = 0
-                sfFrameMs = 0f
-            }
-            if (lastPresentNs == 0L) {
-                lastPresentNs = newestNs
-                lastSfQueryMs = nowMs
+        if (lastPresentNs == 0L) {
+            lastPresentNs = newestNs
+            lastSfQueryMs = nowMs
+            // Initial rolling 1-second estimate immediately so FPS doesn't sit at 0 on first sample
+            val window = validTimestamps.filter { it >= newestNs - 1_000_000_000L }
+            if (window.size >= 2) {
+                val spanNs = window.last() - window.first()
+                if (spanNs > 50_000_000L) {
+                    val est = (((window.size - 1) * 1_000_000_000.0) / spanNs).roundToInt().coerceIn(1, maxHz)
+                    sfFps = est
+                    sfFrameMs = 1000f / est
+                }
             }
             return true
         }
 
+        if (newestNs <= lastPresentNs) {
+            if (lastSfQueryMs > 0L && nowMs - lastSfQueryMs > 1200L) {
+                sfFps = 0
+                sfFrameMs = 0f
+            }
+            return true
+        }
+
+        // Record true per-frame intervals since lastPresentNs for accurate 1% Low benchmark
         val freshTimestamps = validTimestamps.filter { it > lastPresentNs }
         if (freshTimestamps.isNotEmpty()) {
             val frameTimes = ArrayList<Float>(freshTimestamps.size)
@@ -533,12 +670,12 @@ class SystemMonitor(private val context: Context) {
                 TelemetryHub.recordFrameTimes(frameTimes)
             }
 
-            val gapFromPrevNs = freshTimestamps.first() - lastPresentNs
-            val measured: Int? = if (freshTimestamps.size >= 2 && gapFromPrevNs > 250_000_000L) {
-                // Resumed after idle pause or 127-frame ring buffer wrap: use fresh burst span directly
-                val burstDeltaNs = freshTimestamps.last() - freshTimestamps.first()
-                if (burstDeltaNs > 0L) {
-                    (((freshTimestamps.size - 1) * 1_000_000_000.0) / burstDeltaNs).roundToInt().coerceIn(1, maxHz)
+            // Compute smooth, jitter-free FPS from the rolling 1-second window of SurfaceFlinger timestamps
+            val window = validTimestamps.filter { it >= newestNs - 1_000_000_000L }
+            val measured: Int? = if (window.size >= 2) {
+                val spanNs = window.last() - window.first()
+                if (spanNs > 50_000_000L) {
+                    (((window.size - 1) * 1_000_000_000.0) / spanNs).roundToInt().coerceIn(1, maxHz)
                 } else null
             } else {
                 val deltaNs = newestNs - lastPresentNs

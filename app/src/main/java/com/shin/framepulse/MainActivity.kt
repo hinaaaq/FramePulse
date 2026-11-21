@@ -54,7 +54,9 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -185,6 +187,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
     }
 
     val localMonitor = remember { SystemMonitor(context) }
+    val uiScope = rememberCoroutineScope()
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -276,7 +279,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 .border(1.dp, activeAccent.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
                                 .padding(horizontal = 6.dp, vertical = 1.dp)
                         ) {
-                            Text("PRO 2.5.2", color = activeAccent, fontSize = 9.5.sp, fontWeight = FontWeight.ExtraBold)
+                            Text("PRO 2.5.3", color = activeAccent, fontSize = 9.5.sp, fontWeight = FontWeight.ExtraBold)
                         }
                     }
                     Spacer(Modifier.height(4.dp))
@@ -1014,6 +1017,24 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 fontSize = 11.sp,
                                 fontFamily = FontFamily.Monospace
                             )
+                            Spacer(Modifier.height(8.dp))
+                            Button(
+                                onClick = {
+                                    uiScope.launch {
+                                        val report = withContext(Dispatchers.IO) {
+                                            try { localMonitor.dumpSurfaceFlingerDiagnostics() } catch (t: Throwable) { "Error: ${t.message}" }
+                                        }
+                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        cm.setPrimaryClip(ClipData.newPlainText("FramePulse SF Info", report))
+                                        Toast.makeText(context, "Info SurfaceFlinger disalin ke clipboard", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))
+                            ) {
+                                Text("Salin Info SurfaceFlinger (Debug FPS)", color = TextPrimary, fontSize = 12.sp)
+                            }
                             if (lastCrashLog.isNotBlank()) {
                                 Spacer(Modifier.height(8.dp))
                                 Text(

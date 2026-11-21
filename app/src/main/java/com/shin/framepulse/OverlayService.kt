@@ -483,7 +483,7 @@ class OverlayService : Service() {
         }
 
         if (mode == Prefs.LAYOUT_MINI) {
-            if (Prefs.showFps) items.add("${data.fps}FPS" to fpsColor)
+            if (Prefs.showFps) items.add("${if (data.isTrueGameFps) "" else "~"}${data.fps}FPS" to fpsColor)
             if (Prefs.showTemp) {
                 val tCol = if (data.batteryTempC >= 42f) Color.parseColor("#F87171") else accent
                 items.add("${monitor.formatFloat(data.batteryTempC, 1)}°" to tCol)
@@ -494,7 +494,7 @@ class OverlayService : Service() {
         } else {
             if (Prefs.showFps) {
                 val ft = if (Prefs.showFrameTime && data.frameTimeMs > 0f) " ${monitor.formatFloat(data.frameTimeMs, 1)}ms" else ""
-                items.add("FPS ${data.fps}$ft" to fpsColor)
+                items.add("${if (data.isTrueGameFps) "FPS" else "~FPS"} ${data.fps}$ft" to fpsColor)
             }
             if (Prefs.showCpu) {
                 items.add("CPU ${data.cpuLoadPercent}%" to Color.parseColor("#F1F5F9"))

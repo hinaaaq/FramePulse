@@ -11,8 +11,8 @@ android {
         applicationId = "com.shin.framepulse"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "2.5.2"
+        versionCode = 6
+        versionName = "2.5.3"
     }
 
     buildFeatures {
