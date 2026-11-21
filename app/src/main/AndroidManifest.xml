@@ -8,9 +8,11 @@
 
     <application
         android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="FramePulse"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+        android:theme="@android:style/Theme.Material.NoActionBar">
 
         <activity
             android:name=".MainActivity"
@@ -28,7 +30,18 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Real-time FPS, CPU, GPU, RAM, and battery temperature floating overlay monitor" />
+                android:value="Real-time FPS, CPU, GPU, RAM, network, and thermal floating overlay" />
+        </service>
+
+        <service
+            android:name=".FramePulseTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_pulse"
+            android:label="FramePulse HUD"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
         </service>
     </application>
 </manifest>

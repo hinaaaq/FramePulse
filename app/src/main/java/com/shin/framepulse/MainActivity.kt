@@ -3,43 +3,84 @@ package com.shin.framepulse
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.widget.Button
-import android.widget.CheckBox
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.SeekBar
-import android.widget.Switch
-import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
+import java.util.Locale
 import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var statusText: TextView
-    private lateinit var shizukuStatusText: TextView
-    private lateinit var toggleButton: Button
-    private lateinit var lockSwitch: Switch
-
     private val notifPermLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { refreshStatus() }
+    ) { }
 
     private val shizukuListener = Shizuku.OnRequestPermissionResultListener { _, grantResult ->
         if (grantResult == PackageManager.PERMISSION_GRANTED) {
             Toast.makeText(this, "Shizuku aktif: True Game FPS siap!", Toast.LENGTH_SHORT).show()
         }
-        refreshStatus()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -47,361 +88,743 @@ class MainActivity : ComponentActivity() {
         Prefs.init(this)
         Shizuku.addRequestPermissionResultListener(shizukuListener)
 
-        val density = resources.displayMetrics.density
-        fun dp(v: Int) = (v * density).toInt()
-
-        val scrollView = ScrollView(this).apply {
-            setBackgroundColor(Color.parseColor("#0B1120"))
-        }
-
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(28), dp(16), dp(32))
-        }
-
-        val title = TextView(this).apply {
-            text = "FramePulse HUD"
-            textSize = 23f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-        }
-
-        val subtitle = TextView(this).apply {
-            text = "Kustomisasi lengkap overlay anti-ganggu"
-            textSize = 13f
-            setTextColor(Color.parseColor("#94A3B8"))
-            setPadding(0, dp(2), 0, dp(14))
-        }
-
-        fun makeCard(): LinearLayout {
-            return LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#1E293B"))
-                    cornerRadius = dp(12).toFloat()
-                }
-                setPadding(dp(14), dp(12), dp(14), dp(12))
-                val lp = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { bottomMargin = dp(12) }
-                layoutParams = lp
-            }
-        }
-
-        fun sectionHeader(textStr: String): TextView {
-            return TextView(this).apply {
-                text = textStr
-                textSize = 13f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(Color.parseColor("#38BDF8"))
-                setPadding(0, 0, 0, dp(8))
-            }
-        }
-
-        fun styledBtn(label: String, bgHex: String, weight: Float = 0f, onClick: () -> Unit): Button {
-            return Button(this).apply {
-                text = label
-                textSize = 12.5f
-                isAllCaps = false
-                setTextColor(Color.WHITE)
-                background = GradientDrawable().apply {
-                    setColor(Color.parseColor(bgHex))
-                    cornerRadius = dp(10).toFloat()
-                }
-                val lp = if (weight > 0f) {
-                    LinearLayout.LayoutParams(0, dp(40), weight).apply {
-                        marginEnd = dp(6)
-                    }
-                } else {
-                    LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    ).apply { topMargin = dp(8) }
-                }
-                layoutParams = lp
-                setOnClickListener { onClick() }
-            }
-        }
-
-        val statusCard = makeCard()
-        statusText = TextView(this).apply {
-            textSize = 13.5f
-            setTextColor(Color.parseColor("#E2E8F0"))
-            setPadding(0, 0, 0, dp(4))
-        }
-        shizukuStatusText = TextView(this).apply {
-            textSize = 12.5f
-            setTextColor(Color.parseColor("#38BDF8"))
-            setPadding(0, 0, 0, dp(6))
-        }
-        statusCard.addView(statusText)
-        statusCard.addView(shizukuStatusText)
-
-        statusCard.addView(styledBtn("1. Izinkan Tampil di Atas App Lain", "#334155") {
-            if (!Settings.canDrawOverlays(this)) {
-                startActivity(
-                    Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+        setContent {
+            MaterialTheme(
+                colorScheme = darkColorScheme(
+                    primary = CyberCyan,
+                    background = BgObsidian,
+                    surface = CardSurface
                 )
-            } else {
-                Toast.makeText(this, "Izin Overlay sudah aktif", Toast.LENGTH_SHORT).show()
-            }
-        })
-
-        statusCard.addView(styledBtn("2. Hubungkan Shizuku (True Game FPS)", "#0284C7") {
-            try {
-                if (!Shizuku.pingBinder()) {
-                    Toast.makeText(this, "Aktifkan Shizuku dulu via Wireless Debugging / aShell", Toast.LENGTH_LONG).show()
-                } else if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-                    Shizuku.requestPermission(100)
-                } else {
-                    Toast.makeText(this, "Shizuku sudah terhubung!", Toast.LENGTH_SHORT).show()
-                }
-            } catch (_: Throwable) {
-                Toast.makeText(this, "Aplikasi Shizuku belum terpasang", Toast.LENGTH_SHORT).show()
-            }
-        })
-
-        toggleButton = styledBtn("MULAI OVERLAY HUD", "#16A34A") {
-            if (!Settings.canDrawOverlays(this)) {
-                Toast.makeText(this, "Aktifkan izin Overlay dulu!", Toast.LENGTH_SHORT).show()
-                return@styledBtn
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
             ) {
-                notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-
-            if (OverlayService.isRunning) {
-                startService(Intent(this, OverlayService::class.java).apply { action = OverlayService.ACTION_STOP })
-            } else {
-                ContextCompat.startForegroundService(this, Intent(this, OverlayService::class.java).apply {
-                    action = OverlayService.ACTION_START
-                })
-            }
-            toggleButton.postDelayed({ refreshStatus() }, 300)
-        }
-        statusCard.addView(toggleButton)
-
-        val layoutCard = makeCard()
-        layoutCard.addView(sectionHeader("Bentuk HUD & Kecepatan Update"))
-
-        val layoutRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        layoutRow.addView(styledBtn("Horizontal", "#334155", 1f) {
-            Prefs.layoutMode = Prefs.LAYOUT_HORIZONTAL
-            notifyOverlayConfigChanged()
-        })
-        layoutRow.addView(styledBtn("Vertikal", "#334155", 1f) {
-            Prefs.layoutMode = Prefs.LAYOUT_VERTICAL
-            notifyOverlayConfigChanged()
-        })
-        layoutRow.addView(styledBtn("Mini", "#334155", 1f) {
-            Prefs.layoutMode = Prefs.LAYOUT_MINI
-            notifyOverlayConfigChanged()
-        })
-        layoutCard.addView(layoutRow)
-
-        val intervalLabel = TextView(this).apply {
-            text = "Interval Refresh: ${Prefs.updateIntervalMs} ms"
-            textSize = 12.5f
-            setTextColor(Color.parseColor("#CBD5E1"))
-            setPadding(0, dp(10), 0, dp(6))
-        }
-        layoutCard.addView(intervalLabel)
-
-        val intervalRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        listOf(250L to "0.25s", 500L to "0.5s", 1000L to "1.0s").forEach { (ms, label) ->
-            intervalRow.addView(styledBtn(label, "#334155", 1f) {
-                Prefs.updateIntervalMs = ms
-                intervalLabel.text = "Interval Refresh: ${ms} ms"
-                notifyOverlayConfigChanged()
-            })
-        }
-        layoutCard.addView(intervalRow)
-
-        val metricCard = makeCard()
-        metricCard.addView(sectionHeader("Pilih Metrik yang Ditampilkan"))
-
-        fun addMetricCheckbox(label: String, initial: Boolean, onChanged: (Boolean) -> Unit): CheckBox {
-            return CheckBox(this).apply {
-                text = label
-                isChecked = initial
-                textSize = 13f
-                setTextColor(Color.parseColor("#E2E8F0"))
-                setOnCheckedChangeListener { _, isChecked ->
-                    onChanged(isChecked)
-                    notifyOverlayConfigChanged()
-                }
+                FramePulseProApp(
+                    onRequestNotif = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                        ) {
+                            notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }
+                )
             }
         }
-
-        metricCard.addView(addMetricCheckbox("FPS (Frame Per Second)", Prefs.showFps) { Prefs.showFps = it })
-        metricCard.addView(addMetricCheckbox("CPU Load (%)", Prefs.showCpu) { Prefs.showCpu = it })
-        metricCard.addView(addMetricCheckbox("CPU Peak Clock (GHz)", Prefs.showClock) { Prefs.showClock = it })
-        metricCard.addView(addMetricCheckbox("GPU Load (%)", Prefs.showGpu) { Prefs.showGpu = it })
-        metricCard.addView(addMetricCheckbox("RAM Terpakai (GB)", Prefs.showRam) { Prefs.showRam = it })
-        metricCard.addView(addMetricCheckbox("Suhu Baterai (°C)", Prefs.showTemp) { Prefs.showTemp = it })
-        metricCard.addView(addMetricCheckbox("Konsumsi Daya (Watt)", Prefs.showWatt) { Prefs.showWatt = it })
-
-        val visualCard = makeCard()
-        visualCard.addView(sectionHeader("Ukuran & Transparansi (Biar Tidak Ganggu)"))
-
-        val alphaPercentInit = ((Prefs.bgAlpha / 255f) * 100).roundToInt()
-        val alphaLabel = TextView(this).apply {
-            text = "Opacity Kotak Background: $alphaPercentInit% (0% = Teks Melayang Saja)"
-            textSize = 12.5f
-            setTextColor(Color.parseColor("#CBD5E1"))
-        }
-        val alphaSeek = SeekBar(this).apply {
-            max = 255
-            progress = Prefs.bgAlpha
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                    Prefs.bgAlpha = progress
-                    val pct = ((progress / 255f) * 100).roundToInt()
-                    alphaLabel.text = "Opacity Kotak Background: $pct% (0% = Teks Melayang Saja)"
-                    notifyOverlayConfigChanged()
-                }
-                override fun onStartTrackingTouch(sb: SeekBar?) {}
-                override fun onStopTrackingTouch(sb: SeekBar?) {}
-            })
-        }
-
-        val sizeLabel = TextView(this).apply {
-            text = "Ukuran Teks HUD: ${Prefs.textSizeSp} sp"
-            textSize = 12.5f
-            setTextColor(Color.parseColor("#CBD5E1"))
-            setPadding(0, dp(10), 0, 0)
-        }
-        val sizeSeek = SeekBar(this).apply {
-            max = 16
-            progress = ((Prefs.textSizeSp - 8f) * 2f).roundToInt()
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
-                    val spVal = 8f + (progress * 0.5f)
-                    Prefs.textSizeSp = spVal
-                    sizeLabel.text = "Ukuran Teks HUD: $spVal sp"
-                    notifyOverlayConfigChanged()
-                }
-                override fun onStartTrackingTouch(sb: SeekBar?) {}
-                override fun onStopTrackingTouch(sb: SeekBar?) {}
-            })
-        }
-
-        lockSwitch = Switch(this).apply {
-            text = "Kunci Sentuhan HUD (Touch-Through ke Game)"
-            textSize = 13f
-            setTextColor(Color.parseColor("#E2E8F0"))
-            setPadding(0, dp(12), 0, 0)
-            isChecked = OverlayService.isTouchLocked
-            setOnCheckedChangeListener { _, checked ->
-                if (OverlayService.isRunning && OverlayService.isTouchLocked != checked) {
-                    startService(Intent(this@MainActivity, OverlayService::class.java).apply {
-                        action = OverlayService.ACTION_TOGGLE_LOCK
-                    })
-                }
-            }
-        }
-
-        visualCard.addView(alphaLabel)
-        visualCard.addView(alphaSeek)
-        visualCard.addView(sizeLabel)
-        visualCard.addView(sizeSeek)
-        visualCard.addView(lockSwitch)
-
-        val posCard = makeCard()
-        posCard.addView(sectionHeader("Preset Posisi Cepat (Atau Geser Manual)"))
-
-        val dm = resources.displayMetrics
-        val topRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        topRow.addView(styledBtn("Kiri Atas", "#334155", 1f) {
-            setPresetPosition(dp(12), dp(36))
-        })
-        topRow.addView(styledBtn("Tengah Atas", "#334155", 1f) {
-            setPresetPosition((dm.widthPixels * 0.36f).toInt(), dp(36))
-        })
-        topRow.addView(styledBtn("Kanan Atas", "#334155", 1f) {
-            setPresetPosition((dm.widthPixels * 0.65f).toInt(), dp(36))
-        })
-
-        val botRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(6), 0, 0)
-        }
-        botRow.addView(styledBtn("Kiri Bawah", "#334155", 1f) {
-            setPresetPosition(dp(12), (dm.heightPixels * 0.85f).toInt())
-        })
-        botRow.addView(styledBtn("Tengah Bawah", "#334155", 1f) {
-            setPresetPosition((dm.widthPixels * 0.36f).toInt(), (dm.heightPixels * 0.85f).toInt())
-        })
-        botRow.addView(styledBtn("Kanan Bawah", "#334155", 1f) {
-            setPresetPosition((dm.widthPixels * 0.65f).toInt(), (dm.heightPixels * 0.85f).toInt())
-        })
-
-        posCard.addView(topRow)
-        posCard.addView(botRow)
-
-        root.addView(title)
-        root.addView(subtitle)
-        root.addView(statusCard)
-        root.addView(layoutCard)
-        root.addView(metricCard)
-        root.addView(visualCard)
-        root.addView(posCard)
-
-        scrollView.addView(root)
-        setContentView(scrollView)
-    }
-
-    private fun setPresetPosition(x: Int, y: Int) {
-        Prefs.posX = x
-        Prefs.posY = y
-        notifyOverlayConfigChanged()
-    }
-
-    private fun notifyOverlayConfigChanged() {
-        if (OverlayService.isRunning) {
-            startService(Intent(this, OverlayService::class.java).apply {
-                action = OverlayService.ACTION_UPDATE_CONFIG
-            })
-        }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        refreshStatus()
     }
 
     override fun onDestroy() {
         Shizuku.removeRequestPermissionResultListener(shizukuListener)
         super.onDestroy()
     }
+}
 
-    private fun refreshStatus() {
-        val canOverlay = Settings.canDrawOverlays(this)
-        val running = OverlayService.isRunning
-        statusText.text = buildString {
-            append("Izin Overlay : ${if (canOverlay) "AKTIF" else "BELUM AKTIF"}\n")
-            append("Status HUD   : ${if (running) "BERJALAN" else "MATI"}")
+@Composable
+fun FramePulseProApp(onRequestNotif: () -> Unit) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    var selectedTab by remember { mutableIntStateOf(0) }
+    var telemetry by remember { mutableStateOf(TelemetryHub.latest) }
+    var fpsHistory by remember { mutableStateOf<List<Int>>(emptyList()) }
+
+    var overlayGranted by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    var serviceRunning by remember { mutableStateOf(OverlayService.isRunning) }
+    var touchLocked by remember { mutableStateOf(OverlayService.isTouchLocked) }
+    var shizukuConnected by remember { mutableStateOf(false) }
+
+    var isRecording by remember { mutableStateOf(TelemetryHub.isRecording) }
+    var lastBenchmark by remember { mutableStateOf(TelemetryHub.lastSummary) }
+
+    var layoutMode by remember { mutableStateOf(Prefs.layoutMode) }
+    var themeMode by remember { mutableStateOf(Prefs.themeMode) }
+    var bgAlpha by remember { mutableIntStateOf(Prefs.bgAlpha) }
+    var textSizeSp by remember { mutableFloatStateOf(Prefs.textSizeSp) }
+    var intervalMs by remember { mutableLongStateOf(Prefs.updateIntervalMs) }
+    var showHudGraph by remember { mutableStateOf(Prefs.showHudGraph) }
+
+    var sFps by remember { mutableStateOf(Prefs.showFps) }
+    var sFrameTime by remember { mutableStateOf(Prefs.showFrameTime) }
+    var sCpu by remember { mutableStateOf(Prefs.showCpu) }
+    var sClock by remember { mutableStateOf(Prefs.showClock) }
+    var sGpu by remember { mutableStateOf(Prefs.showGpu) }
+    var sRam by remember { mutableStateOf(Prefs.showRam) }
+    var sTemp by remember { mutableStateOf(Prefs.showTemp) }
+    var sWatt by remember { mutableStateOf(Prefs.showWatt) }
+    var sNet by remember { mutableStateOf(Prefs.showNet) }
+
+    val activeAccent = when (themeMode) {
+        Prefs.THEME_EMERALD -> EmeraldNeon
+        Prefs.THEME_CRIMSON -> CrimsonAccent
+        else -> CyberCyan
+    }
+
+    fun pushOverlayUpdate() {
+        if (OverlayService.isRunning) {
+            context.startService(Intent(context, OverlayService::class.java).apply {
+                action = OverlayService.ACTION_UPDATE_CONFIG
+            })
         }
+    }
 
-        val shizukuState = try {
-            when {
-                !Shizuku.pingBinder() -> "Shizuku      : Tidak aktif (Mode Standar)"
-                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED ->
-                    "Shizuku      : TERHUBUNG (True Game FPS)"
-                else -> "Shizuku      : Terdeteksi (Klik tombol 2)"
+    val localMonitor = remember { SystemMonitor(context) }
+
+    DisposableEffect(lifecycleOwner) {
+        localMonitor.start()
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                overlayGranted = Settings.canDrawOverlays(context)
+                serviceRunning = OverlayService.isRunning
+                touchLocked = OverlayService.isTouchLocked
+                shizukuConnected = localMonitor.isShizukuReady()
             }
-        } catch (_: Throwable) {
-            "Shizuku      : Tidak terpasang (Mode Standar)"
         }
-        shizukuStatusText.text = shizukuState
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            localMonitor.stop()
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
-        lockSwitch.isChecked = OverlayService.isTouchLocked
-        toggleButton.text = if (running) "MATIKAN OVERLAY HUD" else "MULAI OVERLAY HUD"
-        (toggleButton.background as? GradientDrawable)?.setColor(
-            Color.parseColor(if (running) "#DC2626" else "#16A34A")
+    LaunchedEffect(Unit) {
+        while (true) {
+            val data = if (OverlayService.isRunning) {
+                TelemetryHub.latest
+            } else {
+                withContext(Dispatchers.IO) { localMonitor.collect() }
+            }
+            telemetry = data
+            fpsHistory = synchronized(TelemetryHub.fpsHistory) { TelemetryHub.fpsHistory.toList() }
+            serviceRunning = OverlayService.isRunning
+            touchLocked = OverlayService.isTouchLocked
+            isRecording = TelemetryHub.isRecording
+            lastBenchmark = TelemetryHub.lastSummary
+            shizukuConnected = localMonitor.isShizukuReady()
+            delay(500L)
+        }
+    }
+
+    Scaffold(
+        containerColor = BgObsidian,
+        topBar = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF0A101D))
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "FramePulse",
+                            color = TextPrimary,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(5.dp))
+                                .background(activeAccent.copy(alpha = 0.2f))
+                                .padding(horizontal = 6.dp, vertical = 1.dp)
+                        ) {
+                            Text("PRO", color = activeAccent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Text(
+                        text = if (shizukuConnected) "Engine: SurfaceFlinger True FPS" else "Engine: Standard Sensor Mode",
+                        color = if (shizukuConnected) EmeraldNeon else TextSecondary,
+                        fontSize = 11.sp
+                    )
+                }
+
+                Button(
+                    onClick = {
+                        if (!Settings.canDrawOverlays(context)) {
+                            Toast.makeText(context, "Aktifkan izin Overlay di tab Setup dulu", Toast.LENGTH_SHORT).show()
+                            selectedTab = 3
+                            return@Button
+                        }
+                        onRequestNotif()
+                        if (OverlayService.isRunning) {
+                            context.startService(Intent(context, OverlayService::class.java).apply {
+                                action = OverlayService.ACTION_STOP
+                            })
+                            serviceRunning = false
+                        } else {
+                            ContextCompat.startForegroundService(
+                                context,
+                                Intent(context, OverlayService::class.java).apply {
+                                    action = OverlayService.ACTION_START
+                                }
+                            )
+                            serviceRunning = true
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (serviceRunning) CrimsonAccent else EmeraldNeon
+                    ),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = if (serviceRunning) "STOP HUD" else "START HUD",
+                        color = Color.Black,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        },
+        bottomBar = {
+            NavigationBar(
+                containerColor = Color(0xFF0A101D),
+                tonalElevation = 0.dp
+            ) {
+                val tabs = listOf("Monitor", "HUD Studio", "Sensors", "Setup")
+                tabs.forEachIndexed { idx, label ->
+                    NavigationBarItem(
+                        selected = selectedTab == idx,
+                        onClick = { selectedTab = idx },
+                        icon = {
+                            val badgeChar = when (idx) {
+                                0 -> "⚡"
+                                1 -> "🎛"
+                                2 -> "📊"
+                                else -> "⚙"
+                            }
+                            Text(badgeChar, fontSize = 16.sp)
+                        },
+                        label = {
+                            Text(
+                                text = label,
+                                fontSize = 11.sp,
+                                fontWeight = if (selectedTab == idx) FontWeight.Bold else FontWeight.Normal
+                            )
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = activeAccent,
+                            selectedTextColor = activeAccent,
+                            indicatorColor = activeAccent.copy(alpha = 0.15f),
+                            unselectedIconColor = TextSecondary,
+                            unselectedTextColor = TextSecondary
+                        )
+                    )
+                }
+            }
+        }
+    ) { innerPadding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(horizontal = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)
+        ) {
+            when (selectedTab) {
+                0 -> {
+                    item {
+                        CyberCard(borderColor = activeAccent.copy(alpha = 0.45f)) {
+                            SectionTitle(
+                                title = "REAL-TIME FRAME PACING",
+                                badge = if (telemetry.isTrueGameFps) "SURFACEFLINGER" else "CHOREOGRAPHER",
+                                accent = activeAccent
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.Bottom
+                            ) {
+                                Row(verticalAlignment = Alignment.Bottom) {
+                                    Text(
+                                        text = "${telemetry.fps}",
+                                        color = if (telemetry.fps >= 50) EmeraldNeon else AmberVolt,
+                                        fontSize = 42.sp,
+                                        fontWeight = FontWeight.Black,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                    Text(
+                                        text = " FPS",
+                                        color = TextSecondary,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(bottom = 8.dp)
+                                    )
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        text = String.format(Locale.US, "%.1f ms", telemetry.frameTimeMs),
+                                        color = TextPrimary,
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                    Text("Frame Time", color = TextSecondary, fontSize = 11.sp)
+                                }
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            ComposeSparkline(points = fpsHistory, accent = activeAccent)
+                        }
+                    }
+                    item {
+                        CyberCard {
+                            SectionTitle(
+                                title = "SESSION BENCHMARK RECORDER",
+                                badge = if (isRecording) "● RECORDING" else "READY",
+                                accent = if (isRecording) CrimsonAccent else EmeraldNeon
+                            )
+                            Button(
+                                onClick = {
+                                    if (isRecording) {
+                                        lastBenchmark = TelemetryHub.stopRecording()
+                                        isRecording = false
+                                    } else {
+                                        TelemetryHub.startRecording()
+                                        isRecording = true
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isRecording) CrimsonAccent else Color(0xFF1E293B)
+                                )
+                            ) {
+                                Text(
+                                    text = if (isRecording) "STOP & HITUNG HASIL BENCHMARK" else "MULAI REKAM SESI GAME (AVG & 1% LOW)",
+                                    color = TextPrimary,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp
+                                )
+                            }
+
+                            lastBenchmark?.let { res ->
+                                Spacer(Modifier.height(10.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    MetricMiniCol("AVG FPS", String.format(Locale.US, "%.1f", res.avgFps), EmeraldNeon)
+                                    MetricMiniCol("1% LOW", "${res.onePercentLowFps}", AmberVolt)
+                                    MetricMiniCol("MIN/MAX", "${res.minFps}/${res.maxFps}", CyberCyan)
+                                    MetricMiniCol("PEAK °C", String.format(Locale.US, "%.1f°", res.peakTempC), CrimsonAccent)
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            CyberCard(modifier = Modifier.weight(1f)) {
+                                Text("CPU & GPU LOAD", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = "CPU ${telemetry.cpuLoadPercent}%",
+                                    color = TextPrimary,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Text(
+                                    text = "GPU ${telemetry.gpuLoadPercent?.let { "$it%" } ?: "N/A"} • ${String.format(Locale.US, "%.2f", telemetry.cpuMaxGhz)}GHz",
+                                    color = PurpleGpu,
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                            CyberCard(modifier = Modifier.weight(1f)) {
+                                Text("THERMAL & POWER", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = String.format(Locale.US, "%.1f °C", telemetry.batteryTempC),
+                                    color = if (telemetry.batteryTempC >= 42f) CrimsonAccent else CyberCyan,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Text(
+                                    text = String.format(Locale.US, "%.1f W • %d mA", telemetry.powerWatts, telemetry.currentMa),
+                                    color = AmberVolt,
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            CyberCard(modifier = Modifier.weight(1f)) {
+                                Text("MEMORY (RAM)", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = String.format(Locale.US, "%.1f / %.1f GB", telemetry.ramUsedGb, telemetry.ramTotalGb),
+                                    color = TextPrimary,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                val ramRatio = if (telemetry.ramTotalGb > 0f) (telemetry.ramUsedGb / telemetry.ramTotalGb).coerceIn(0f, 1f) else 0f
+                                Spacer(Modifier.height(6.dp))
+                                LinearProgressIndicator(
+                                    progress = { ramRatio },
+                                    modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(4.dp)),
+                                    color = Color(0xFFF472B6),
+                                    trackColor = Color(0xFF1E293B)
+                                )
+                            }
+                            CyberCard(modifier = Modifier.weight(1f)) {
+                                Text("NETWORK I/O", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = "↓ ${telemetry.netDownKbps.toInt()} KB/s",
+                                    color = EmeraldNeon,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Text(
+                                    text = "↑ ${telemetry.netUpKbps.toInt()} KB/s",
+                                    color = TextSecondary,
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+
+                    if (telemetry.cores.isNotEmpty()) {
+                        item {
+                            CyberCard {
+                                SectionTitle("8-CORE CPU FREQUENCY MATRIX", "BIG.LITTLE", activeAccent)
+                                telemetry.cores.chunked(2).forEach { pair ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        pair.forEach { core ->
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                ) {
+                                                    Text(
+                                                        text = "C${core.coreIndex} ${if (core.isBigCore) "A76" else "A55"}",
+                                                        color = if (core.isBigCore) AmberVolt else TextSecondary,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontFamily = FontFamily.Monospace
+                                                    )
+                                                    Text(
+                                                        text = "${core.curMhz} MHz",
+                                                        color = TextPrimary,
+                                                        fontSize = 10.sp,
+                                                        fontFamily = FontFamily.Monospace
+                                                    )
+                                                }
+                                                Spacer(Modifier.height(3.dp))
+                                                LinearProgressIndicator(
+                                                    progress = { core.loadPercent / 100f },
+                                                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(3.dp)),
+                                                    color = if (core.isBigCore) AmberVolt else activeAccent,
+                                                    trackColor = Color(0xFF1E293B)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                1 -> {
+                    item {
+                        CyberCard(borderColor = activeAccent.copy(alpha = 0.5f)) {
+                            SectionTitle("LIVE HUD PREVIEW", layoutMode, activeAccent)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF04070D))
+                                    .padding(14.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF090E1A).copy(alpha = bgAlpha / 255f))
+                                        .border(
+                                            1.dp,
+                                            if (bgAlpha > 20) activeAccent.copy(alpha = 0.5f) else Color.Transparent,
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = "FPS ${telemetry.fps} │ CPU ${telemetry.cpuLoadPercent}% │ ${String.format(Locale.US, "%.1f°C", telemetry.batteryTempC)}",
+                                        color = activeAccent,
+                                        fontSize = textSizeSp.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        CyberCard {
+                            SectionTitle("BENTUK & TEMA WARNA HUD")
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(
+                                    Prefs.LAYOUT_HORIZONTAL to "Horizontal",
+                                    Prefs.LAYOUT_VERTICAL to "Vertikal",
+                                    Prefs.LAYOUT_MINI to "Mini"
+                                ).forEach { (key, label) ->
+                                    PillChip(
+                                        label = label,
+                                        selected = layoutMode == key,
+                                        accent = activeAccent,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        layoutMode = key
+                                        Prefs.layoutMode = key
+                                        pushOverlayUpdate()
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(
+                                    Triple(Prefs.THEME_CYBER, "Cyber", CyberCyan),
+                                    Triple(Prefs.THEME_EMERALD, "Emerald", EmeraldNeon),
+                                    Triple(Prefs.THEME_CRIMSON, "Crimson", CrimsonAccent)
+                                ).forEach { (key, label, col) ->
+                                    PillChip(
+                                        label = label,
+                                        selected = themeMode == key,
+                                        accent = col,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        themeMode = key
+                                        Prefs.themeMode = key
+                                        pushOverlayUpdate()
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        CyberCard {
+                            SectionTitle("TRANSPARANSI, UKURAN & REFRESH")
+                            val pct = ((bgAlpha / 255f) * 100).roundToInt()
+                            Text("Opacity Background: $pct% (0% = Teks Melayang Tanpa Kotak)", color = TextSecondary, fontSize = 12.sp)
+                            Slider(
+                                value = bgAlpha.toFloat(),
+                                onValueChange = {
+                                    bgAlpha = it.roundToInt()
+                                    Prefs.bgAlpha = bgAlpha
+                                    pushOverlayUpdate()
+                                },
+                                valueRange = 0f..255f,
+                                colors = SliderDefaults.colors(thumbColor = activeAccent, activeTrackColor = activeAccent)
+                            )
+
+                            Text("Ukuran Teks HUD: ${String.format(Locale.US, "%.1f", textSizeSp)} sp", color = TextSecondary, fontSize = 12.sp)
+                            Slider(
+                                value = textSizeSp,
+                                onValueChange = {
+                                    textSizeSp = (it * 2f).roundToInt() / 2f
+                                    Prefs.textSizeSp = textSizeSp
+                                    pushOverlayUpdate()
+                                },
+                                valueRange = 8f..16f,
+                                colors = SliderDefaults.colors(thumbColor = activeAccent, activeTrackColor = activeAccent)
+                            )
+
+                            Spacer(Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(250L to "0.25s (Cepat)", 500L to "0.5s (Normal)", 1000L to "1.0s (Hemat)").forEach { (ms, lbl) ->
+                                    PillChip(
+                                        label = lbl,
+                                        selected = intervalMs == ms,
+                                        accent = activeAccent,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        intervalMs = ms
+                                        Prefs.updateIntervalMs = ms
+                                        pushOverlayUpdate()
+                                    }
+                                }
+                            }
+
+                            Spacer(Modifier.height(10.dp))
+                            ToggleRow("Tampilkan Grafik Mini di dalam HUD", showHudGraph, activeAccent) {
+                                showHudGraph = it
+                                Prefs.showHudGraph = it
+                                pushOverlayUpdate()
+                            }
+                            ToggleRow("Kunci Sentuhan HUD (Touch-Through ke Game)", touchLocked, activeAccent) {
+                                if (OverlayService.isRunning && OverlayService.isTouchLocked != it) {
+                                    context.startService(Intent(context, OverlayService::class.java).apply {
+                                        action = OverlayService.ACTION_TOGGLE_LOCK
+                                    })
+                                    touchLocked = it
+                                }
+                            }
+                        }
+                    }
+                    item {
+                        val dm = context.resources.displayMetrics
+                        CyberCard {
+                            SectionTitle("PRESET POSISI LAYAR (ATAU GESER MANUAL)")
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                PillChip("Kiri Atas", false, activeAccent, Modifier.weight(1f)) {
+                                    Prefs.posX = 24; Prefs.posY = 42; pushOverlayUpdate()
+                                }
+                                PillChip("Tengah Atas", false, activeAccent, Modifier.weight(1f)) {
+                                    Prefs.posX = (dm.widthPixels * 0.35f).toInt(); Prefs.posY = 42; pushOverlayUpdate()
+                                }
+                                PillChip("Kanan Atas", false, activeAccent, Modifier.weight(1f)) {
+                                    Prefs.posX = (dm.widthPixels * 0.65f).toInt(); Prefs.posY = 42; pushOverlayUpdate()
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                PillChip("Kiri Bawah", false, activeAccent, Modifier.weight(1f)) {
+                                    Prefs.posX = 24; Prefs.posY = (dm.heightPixels * 0.85f).toInt(); pushOverlayUpdate()
+                                }
+                                PillChip("Tengah Bawah", false, activeAccent, Modifier.weight(1f)) {
+                                    Prefs.posX = (dm.widthPixels * 0.35f).toInt(); Prefs.posY = (dm.heightPixels * 0.85f).toInt(); pushOverlayUpdate()
+                                }
+                                PillChip("Kanan Bawah", false, activeAccent, Modifier.weight(1f)) {
+                                    Prefs.posX = (dm.widthPixels * 0.65f).toInt(); Prefs.posY = (dm.heightPixels * 0.85f).toInt(); pushOverlayUpdate()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                2 -> {
+                    item {
+                        CyberCard {
+                            SectionTitle("PILIH DATA SENSOR DI OVERLAY")
+                            ToggleRow("FPS (Frame Per Second)", sFps, activeAccent) { sFps = it; Prefs.showFps = it; pushOverlayUpdate() }
+                            ToggleRow("Frame Time (ms)", sFrameTime, activeAccent) { sFrameTime = it; Prefs.showFrameTime = it; pushOverlayUpdate() }
+                            ToggleRow("CPU Total Load (%)", sCpu, activeAccent) { sCpu = it; Prefs.showCpu = it; pushOverlayUpdate() }
+                            ToggleRow("CPU Peak Clock (GHz)", sClock, activeAccent) { sClock = it; Prefs.showClock = it; pushOverlayUpdate() }
+                            ToggleRow("GPU Load (%)", sGpu, activeAccent) { sGpu = it; Prefs.showGpu = it; pushOverlayUpdate() }
+                            ToggleRow("RAM Terpakai (GB)", sRam, activeAccent) { sRam = it; Prefs.showRam = it; pushOverlayUpdate() }
+                            ToggleRow("Suhu Baterai (°C)", sTemp, activeAccent) { sTemp = it; Prefs.showTemp = it; pushOverlayUpdate() }
+                            ToggleRow("Konsumsi Daya (Watt)", sWatt, activeAccent) { sWatt = it; Prefs.showWatt = it; pushOverlayUpdate() }
+                            ToggleRow("Kecepatan Download (KB/s)", sNet, activeAccent) { sNet = it; Prefs.showNet = it; pushOverlayUpdate() }
+                        }
+                    }
+                }
+
+                else -> {
+                    item {
+                        CyberCard {
+                            SectionTitle("1. IZIN FLOATING OVERLAY", if (overlayGranted) "AKTIF" else "WAJIB", activeAccent)
+                            Text(
+                                text = "Diperlukan agar HUD FramePulse dapat melayang di atas game dan aplikasi lain.",
+                                color = TextSecondary,
+                                fontSize = 12.sp
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Button(
+                                onClick = {
+                                    context.startActivity(
+                                        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+                                    )
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))
+                            ) {
+                                Text(if (overlayGranted) "Izin Overlay Sudah Aktif ✓" else "Buka Pengaturan Izin Overlay", color = TextPrimary)
+                            }
+                        }
+                    }
+
+                    item {
+                        CyberCard {
+                            SectionTitle("2. SHIZUKU BRIDGE (TRUE GAME FPS)", if (shizukuConnected) "TERHUBUNG" else "OPSIONAL", EmeraldNeon)
+                            Text(
+                                text = "Menghubungkan ke SurfaceFlinger Android untuk membaca FPS asli game & 1% Low tanpa root.",
+                                color = TextSecondary,
+                                fontSize = 12.sp
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Button(
+                                onClick = {
+                                    try {
+                                        if (!Shizuku.pingBinder()) {
+                                            Toast.makeText(context, "Jalankan service Shizuku dulu via Wireless Debugging / aShell", Toast.LENGTH_LONG).show()
+                                        } else if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+                                            Shizuku.requestPermission(100)
+                                        } else {
+                                            shizukuConnected = true
+                                            Toast.makeText(context, "Shizuku sudah terhubung!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    } catch (_: Throwable) {
+                                        Toast.makeText(context, "Aplikasi Shizuku belum terpasang", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0369A1))
+                            ) {
+                                Text(if (shizukuConnected) "Shizuku Terhubung ✓" else "Hubungkan Izin Shizuku", color = TextPrimary)
+                            }
+                        }
+                    }
+
+                    item {
+                        CyberCard {
+                            SectionTitle("3. QUICK SETTINGS TILE (ONE UI)", "FITUR PRO", CyberCyan)
+                            Text(
+                                text = "Tarik panel notifikasi Samsung dari atas layar -> tap ikon Pensil (Edit tombol) -> seret ubin 'FramePulse HUD' ke panel cepat agar bisa menyalakan/mematikan HUD kapan saja saat main game.",
+                                color = TextSecondary,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun MetricMiniCol(label: String, value: String, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, color = color, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace)
+        Text(label, color = TextSecondary, fontSize = 10.sp)
+    }
+}
+
+@Composable
+fun ToggleRow(label: String, checked: Boolean, accent: Color, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, color = TextPrimary, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = accent)
         )
     }
 }
