@@ -1984,6 +1984,66 @@ fun ProSupporterDialog(
                         fontSize = 11.5.sp
                     )
                 }
+                var showQrisDialog by remember { mutableStateOf(false) }
+                var showPresetDialog by remember { mutableStateOf(false) }
+                Spacer(Modifier.height(7.dp))
+                Button(
+                    onClick = {
+                        if (linkedEmail.isBlank()) {
+                            Toast.makeText(context, str.proSyncNeedEmail, Toast.LENGTH_SHORT).show()
+                            launchGooglePicker()
+                            return@Button
+                        }
+                        showQrisDialog = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(11.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0EA5E9))
+                ) {
+                    Text(
+                        text = "Bayar QRIS Otomatis • ${selectedPlan.priceIdr}",
+                        color = Color.White,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 11.5.sp
+                    )
+                }
+                Spacer(Modifier.height(7.dp))
+                OutlinedButton(
+                    onClick = { showPresetDialog = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(11.dp)
+                ) {
+                    Text(
+                        text = "Preset Game Pro (Valorant, MLBB, PUBG...)",
+                        color = Color(0xFF34D399),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.5.sp
+                    )
+                }
+                if (showQrisDialog) {
+                    val amt = selectedPlan.priceIdr.filter { it.isDigit() }.toIntOrNull() ?: 10000
+                    QrisPaymentDialog(
+                        email = linkedEmail,
+                        planLabel = selectedPlan.name,
+                        amountIdr = amt,
+                        onCheckPaid = {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                runCatching {
+                                    val enc = java.net.URLEncoder.encode(linkedEmail, "UTF-8")
+                                    val u = java.net.URL("${ProLicenseManager.CLOUD_API_BASE.trimEnd('/')}/api/check?email=$enc&device=qris")
+                                    u.readText().contains("\"active\":true")
+                                }.getOrDefault(false)
+                            }
+                        },
+                        onDismiss = { showQrisDialog = false }
+                    )
+                }
+                if (showPresetDialog) {
+                    GamePresetDialog(
+                        isPro = ProLicenseManager.isProActive(context),
+                        onDismiss = { showPresetDialog = false }
+                    )
+                }
                 if (ProLicenseManager.DONATE_URL_GLOBAL.startsWith("https://")) {
                 Spacer(Modifier.height(7.dp))
                 Button(

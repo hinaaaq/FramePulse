@@ -214,4 +214,24 @@ object GameBooster {
         }
         isThermalCooldown = false
     }
+
+    fun applyGamePreset(preset: GamePreset): Pair<Boolean, String> {
+        if (!isShizukuReady()) return false to "Shizuku belum aktif. Jalankan Shizuku dulu."
+        val cmds = GameProfileEngine.buildApplyCommands(preset)
+        var okCount = 0
+        for (c in cmds) {
+            val (code, _) = runOneShotShell(c)
+            if (code == 0) okCount++
+        }
+        lastBoostSummary = "${preset.name} (${preset.downscale}x • ${preset.targetFps} FPS)"
+        return true to "Preset ${preset.name} aktif ($okCount/${cmds.size} perintah sistem berhasil)"
+    }
+
+    fun resetGamePreset(preset: GamePreset): Pair<Boolean, String> {
+        if (!isShizukuReady()) return false to "Shizuku belum aktif."
+        for (c in GameProfileEngine.buildResetCommands(preset)) {
+            runOneShotShell(c)
+        }
+        return true to "Setelan ${preset.name} dikembalikan ke normal"
+    }
 }
