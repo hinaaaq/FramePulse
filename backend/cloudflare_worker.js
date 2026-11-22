@@ -133,6 +133,53 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
+    // --- MIDTRANS QRIS DYNAMIC CREATE ---
+    if (path === "/api/qris/create" && request.method === "POST") {
+      if (!env.MIDTRANS_SERVER_KEY) return jsonResp({ error: "midtrans_not_configured" }, 500);
+      const body = await request.json().catch(() => ({}));
+      const email = String(body.email || "").trim().toLowerCase();
+      const amount = parseInt(body.amount || "0", 10);
+      const plan = mapIdrToPlan(amount);
+      if (!email.includes("@") || !plan) return jsonResp({ error: "invalid_email_or_amount" }, 400);
+      const orderId = "FP-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7).toUpperCase();
+      const base = env.MIDTRANS_IS_PRODUCTION === "true" ? "https://api.midtrans.com" : "https://api.sandbox.midtrans.com";
+      const mRes = await fetch(base + "/v2/charge", {
+        method: "POST",
+        headers: {
+          "Authorization": "Basic " + btoa(env.MIDTRANS_SERVER_KEY + ":"),
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify({
+          payment_type: "qris",
+          transaction_details: { order_id: orderId, gross_amount: amount },
+          qris: { acquirer: "gopay" },
+          customer_details: { email }
+        })
+      });
+      const mData = await mRes.json().catch(() => ({}));
+      const qrUrl = (mData.actions || []).find(a => a.name === "generate-qr-code")?.url || "";
+      if (!qrUrl) return jsonResp({ error: "midtrans_failed", detail: mData }, 502);
+      await env.LICENSES.put("order:" + orderId, JSON.stringify({ email, amount, tier: plan.tier, days: plan.days }), { expirationTtl: 86400 });
+      return jsonResp({ ok: true, orderId, amount, tier: plan.tier, qrUrl, qrString: mData.qr_string || "", expiryTime: mData.expiry_time || "" });
+    }
+
+    // --- MIDTRANS WEBHOOK ---
+    if (path === "/webhook/midtrans" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const rawSig = String(body.order_id || "") + String(body.status_code || "") + String(body.gross_amount || "") + String(env.MIDTRANS_SERVER_KEY || "");
+      const hashBuf = await crypto.subtle.digest("SHA-512", new TextEncoder().encode(rawSig));
+      const expectedSig = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, "0")).join("");
+      if (expectedSig !== body.signature_key) return jsonResp({ error: "invalid_signature" }, 403);
+      if (body.transaction_status === "settlement" || body.transaction_status === "capture") {
+        const ord = await env.LICENSES.get("order:" + body.order_id, "json");
+        if (ord && ord.email) {
+          await grantPro(env, ord.email, ord.tier, ord.days, "midtrans:" + body.order_id);
+          await env.LICENSES.delete("order:" + body.order_id);
+        }
+      }
+      return jsonResp({ ok: true });
+    }
 
     // 1. App Auto-Check Endpoint: GET /api/check?email=...&device=...
     if (path === "/api/check" && request.method === "GET") {
