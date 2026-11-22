@@ -45,9 +45,9 @@ data class ProPlanOption(
 object ProLicenseManager {
 
     // Ganti 3 URL di bawah dengan URL asli milikmu setelah setup Tako, Gumroad, dan Cloudflare Worker gratis
-    const val CLOUD_API_BASE = "https://framepulse-api.USERNAME_KAMU.workers.dev"
-    const val DONATE_URL_ID = "https://tako.id/USERNAME_KAMU"
-    const val DONATE_URL_GLOBAL = "https://USERNAME_KAMU.gumroad.com/l/framepulse-pro"
+    const val CLOUD_API_BASE = "https://framepulse-api.senoyasin726.workers.dev"
+    const val DONATE_URL_ID = "https://tako.id/Lazyperson"
+    const val DONATE_URL_GLOBAL = ""
 
     // Public Key ECDSA P-256 (Aman untuk repo GitHub public — tidak bisa dipakai membuat kunci)
     private const val PUBLIC_KEY_SPKI_B64 =

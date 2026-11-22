@@ -1984,6 +1984,7 @@ fun ProSupporterDialog(
                         fontSize = 11.5.sp
                     )
                 }
+                if (ProLicenseManager.DONATE_URL_GLOBAL.startsWith("https://")) {
                 Spacer(Modifier.height(7.dp))
                 Button(
                     onClick = {
@@ -2004,6 +2005,7 @@ fun ProSupporterDialog(
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.5.sp
                     )
+                }
                 }
 
                 Spacer(Modifier.height(7.dp))
