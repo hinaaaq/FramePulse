@@ -152,4 +152,20 @@ object Prefs {
     var benchmarkHistoryRaw: String
         get() = sp().getString("benchmark_history_raw", "") ?: ""
         set(v) = sp().edit().putString("benchmark_history_raw", v).apply()
+
+    var turboAutoBoost: Boolean
+        get() = sp().getBoolean("turbo_auto_boost", false)
+        set(v) = sp().edit().putBoolean("turbo_auto_boost", v).apply()
+
+    var turboFixedPerf: Boolean
+        get() = sp().getBoolean("turbo_fixed_perf", false)
+        set(v) = sp().edit().putBoolean("turbo_fixed_perf", v).apply()
+
+    var turboThermalLimitC: Float
+        get() = sp().getFloat("turbo_thermal_limit_c", 43.0f)
+        set(v) = sp().edit().putFloat("turbo_thermal_limit_c", v.coerceIn(39f, 46f)).apply()
+
+    var lastGamePackage: String
+        get() = sp().getString("last_game_package", "") ?: ""
+        set(v) = sp().edit().putString("last_game_package", v).apply()
 }

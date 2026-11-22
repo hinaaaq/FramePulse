@@ -31,6 +31,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -186,6 +187,11 @@ class OverlayService : Service() {
                 applyVisualConfig()
                 monitor.start()
                 syncQsTile()
+                if (Prefs.turboAutoBoost) {
+                    workerExecutor.execute {
+                        try { GameBooster.runQuickBoost(this) } catch (_: Throwable) {}
+                    }
+                }
                 mainHandler.removeCallbacks(updateRunnable)
                 mainHandler.post(updateRunnable)
             } catch (_: Throwable) {
@@ -291,6 +297,16 @@ class OverlayService : Service() {
             stopSelf()
         }
 
+        val boostBtn = makeActionChip("BST", "#10B981") {
+            workerExecutor.execute {
+                val res = GameBooster.runQuickBoost(this)
+                mainHandler.post {
+                    Toast.makeText(this, "Boost: ${res.summaryMessage}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+        quickActionRow?.addView(boostBtn)
         quickActionRow?.addView(recBtnView)
         quickActionRow?.addView(modeBtn)
         quickActionRow?.addView(lockBtn)
@@ -375,22 +391,34 @@ class OverlayService : Service() {
         windowManager.addView(rootContainer, layoutParams)
     }
 
+    private fun getScreenBoundsPx(): Pair<Int, Int> {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = windowManager.currentWindowMetrics.bounds
+            bounds.width() to bounds.height()
+        } else {
+            val dm = resources.displayMetrics
+            dm.widthPixels to dm.heightPixels
+        }
+    }
+
     private fun snapToNearestEdge() {
-        val dm = resources.displayMetrics
-        val margin = (8 * dm.density).toInt()
-        val viewW = rootContainer?.width?.takeIf { it > 0 } ?: (120 * dm.density).toInt()
-        val maxX = (dm.widthPixels - viewW - margin).coerceAtLeast(margin)
+        val density = resources.displayMetrics.density
+        val (screenW, _) = getScreenBoundsPx()
+        val margin = (8 * density).toInt()
+        val viewW = rootContainer?.width?.takeIf { it > 0 } ?: (120 * density).toInt()
+        val maxX = (screenW - viewW - margin).coerceAtLeast(margin)
         val centerX = layoutParams.x + viewW / 2
-        layoutParams.x = if (centerX < dm.widthPixels / 2) margin else maxX
+        layoutParams.x = if (centerX < screenW / 2) margin else maxX
         clampPositionToScreen()
     }
 
     private fun clampPositionToScreen() {
-        val dm = resources.displayMetrics
-        val viewW = rootContainer?.width?.takeIf { it > 0 } ?: (120 * dm.density).toInt()
-        val viewH = rootContainer?.height?.takeIf { it > 0 } ?: (40 * dm.density).toInt()
-        val maxX = (dm.widthPixels - viewW).coerceAtLeast(0)
-        val maxY = (dm.heightPixels - viewH).coerceAtLeast(0)
+        val density = resources.displayMetrics.density
+        val (screenW, screenH) = getScreenBoundsPx()
+        val viewW = rootContainer?.width?.takeIf { it > 0 } ?: (120 * density).toInt()
+        val viewH = rootContainer?.height?.takeIf { it > 0 } ?: (40 * density).toInt()
+        val maxX = (screenW - viewW).coerceAtLeast(0)
+        val maxY = (screenH - viewH).coerceAtLeast(0)
         layoutParams.x = layoutParams.x.coerceIn(0, maxX)
         layoutParams.y = layoutParams.y.coerceIn(0, maxY)
     }
@@ -550,7 +578,7 @@ class OverlayService : Service() {
         }
 
         if (items.isEmpty()) {
-            items.add("FPS ${data.fps}" to fpsColor)
+            items.add("${if (data.isTrueGameFps) "FPS" else "~FPS"} ${data.fps}" to fpsColor)
         }
 
         val contentHash = items.hashCode() * 31 + mode.hashCode()
@@ -604,12 +632,20 @@ class OverlayService : Service() {
             this, 1, toggleLockIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val openIntent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        val openPending = PendingIntent.getActivity(
+            this, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val stopIntent = Intent(this, OverlayService::class.java).apply { action = ACTION_STOP }
         val stopPending = PendingIntent.getService(
             this, 2, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentIntent(openPending)
             .setSmallIcon(R.drawable.ic_tile_pulse)
             .setContentTitle("FramePulse Pro Aktif")
             .setContentText(if (isTouchLocked) "Mode tembus sentuhan aktif" else "Tap HUD untuk menu cepat, geser untuk pindah")
@@ -626,6 +662,7 @@ class OverlayService : Service() {
         mainHandler.removeCallbacksAndMessages(null)
         monitor.stop()
         workerExecutor.shutdownNow()
+        Thread { try { GameBooster.shutdownSafely() } catch (_: Throwable) {} }.start()
         rootContainer?.let {
             try {
                 windowManager.removeView(it)

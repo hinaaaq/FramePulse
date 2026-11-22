@@ -152,6 +152,15 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
     var benchmarkHistory by remember { mutableStateOf(TelemetryHub.loadHistory()) }
     var lastCrashLog by remember { mutableStateOf(Prefs.lastCrashLog) }
 
+    var turboAutoBoost by remember { mutableStateOf(Prefs.turboAutoBoost) }
+    var turboFixedPerf by remember { mutableStateOf(Prefs.turboFixedPerf) }
+    var fixedPerfLive by remember { mutableStateOf(GameBooster.isFixedPerfActive) }
+    var thermalCooldown by remember { mutableStateOf(GameBooster.isThermalCooldown) }
+    var boostStatusText by remember { mutableStateOf(GameBooster.lastBoostSummary) }
+    var isBoosting by remember { mutableStateOf(false) }
+    var isCompilingArt by remember { mutableStateOf(false) }
+    var lastGamePkg by remember { mutableStateOf(Prefs.lastGamePackage) }
+
     var layoutMode by remember { mutableStateOf(Prefs.layoutMode) }
     var hudStyle by remember { mutableStateOf(Prefs.hudStyle) }
     var themeMode by remember { mutableStateOf(Prefs.themeMode) }
@@ -248,6 +257,11 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
             recElapsedSec = TelemetryHub.getRecordingElapsedSec()
             shizukuBinderAlive = localMonitor.isShizukuBinderAlive()
             shizukuConnected = localMonitor.isShizukuReady()
+            fixedPerfLive = GameBooster.isFixedPerfActive
+            thermalCooldown = GameBooster.isThermalCooldown
+            if (GameBooster.lastBoostSummary.isNotBlank()) boostStatusText = GameBooster.lastBoostSummary
+            val latestPkg = Prefs.lastGamePackage
+            if (latestPkg.isNotBlank()) lastGamePkg = latestPkg
             delay(500L)
         }
     }
@@ -282,7 +296,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 .border(1.dp, activeAccent.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
                                 .padding(horizontal = 6.dp, vertical = 1.dp)
                         ) {
-                            Text("PRO 2.5.4", color = activeAccent, fontSize = 9.5.sp, fontWeight = FontWeight.ExtraBold)
+                            Text("PRO 2.6", color = activeAccent, fontSize = 9.5.sp, fontWeight = FontWeight.ExtraBold)
                         }
                     }
                     Spacer(Modifier.height(4.dp))
@@ -436,6 +450,138 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 accent = activeAccent,
                                 maxScaleFps = effectiveGraphMax
                             )
+                        }
+                    }
+
+                    item {
+                        val turboBadge = when {
+                            thermalCooldown -> "COOLDOWN"
+                            fixedPerfLive -> "PERF HAL ON"
+                            turboAutoBoost -> "AUTO READY"
+                            else -> "SHIZUKU"
+                        }
+                        val turboBadgeColor = when {
+                            thermalCooldown -> AmberVolt
+                            fixedPerfLive -> EmeraldNeon
+                            else -> activeAccent
+                        }
+                        CyberCard(borderColor = if (fixedPerfLive) EmeraldNeon.copy(alpha = 0.55f) else CardBorder) {
+                            SectionTitle("GAME TURBO ENGINE", turboBadge, turboBadgeColor)
+                            val targetShort = lastGamePkg.substringAfterLast('.').ifBlank { "Otomatis saat main" }
+                            Text(
+                                text = "Target Game: $targetShort • Thermal Guard: ${Prefs.turboThermalLimitC.roundToInt()}°C",
+                                color = TextSecondary,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            if (boostStatusText.isNotBlank()) {
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = boostStatusText,
+                                    color = EmeraldNeon,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    enabled = !isBoosting,
+                                    onClick = {
+                                        isBoosting = true
+                                        uiScope.launch {
+                                            val res = withContext(Dispatchers.IO) {
+                                                GameBooster.runQuickBoost(context)
+                                            }
+                                            boostStatusText = res.summaryMessage
+                                            fixedPerfLive = GameBooster.isFixedPerfActive
+                                            thermalCooldown = GameBooster.isThermalCooldown
+                                            isBoosting = false
+                                            Toast.makeText(context, res.summaryMessage, Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldNeon)
+                                ) {
+                                    Text(
+                                        text = if (isBoosting) "BOOSTING..." else "BOOST SEKARANG",
+                                        color = Color.Black,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 11.5.sp
+                                    )
+                                }
+                                Button(
+                                    enabled = !isCompilingArt,
+                                    onClick = {
+                                        isCompilingArt = true
+                                        uiScope.launch {
+                                            val msg = withContext(Dispatchers.IO) {
+                                                GameBooster.optimizeGameArtProfile(GameBooster.resolveTargetGamePackage())
+                                            }
+                                            boostStatusText = msg
+                                            isCompilingArt = false
+                                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))
+                                ) {
+                                    Text(
+                                        text = if (isCompilingArt) "OPTIMASI..." else "ART COMPILE",
+                                        color = TextPrimary,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.5.sp
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            ToggleRow("Auto-Boost saat START HUD & buka game", turboAutoBoost, activeAccent) {
+                                turboAutoBoost = it
+                                Prefs.turboAutoBoost = it
+                            }
+                            ToggleRow("Fixed Performance Mode (anti-drop 1% Low)", turboFixedPerf, EmeraldNeon) { enabled ->
+                                turboFixedPerf = enabled
+                                Prefs.turboFixedPerf = enabled
+                                uiScope.launch {
+                                    val ok = withContext(Dispatchers.IO) {
+                                        GameBooster.setFixedPerformanceMode(enabled)
+                                    }
+                                    fixedPerfLive = GameBooster.isFixedPerfActive
+                                    val msg = when {
+                                        !enabled -> "Fixed Performance Mode dimatikan"
+                                        ok -> "Fixed Performance Mode AKTIF (Thermal Guard 43°C)"
+                                        else -> "Perangkat/Shizuku tidak mendukung Fixed Perf HAL"
+                                    }
+                                    boostStatusText = msg
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Button(
+                                onClick = {
+                                    layoutMode = Prefs.LAYOUT_MINI
+                                    hudStyle = Prefs.STYLE_MINIMAL
+                                    intervalMs = 1000L
+                                    showHudGraph = false
+                                    Prefs.layoutMode = Prefs.LAYOUT_MINI
+                                    Prefs.hudStyle = Prefs.STYLE_MINIMAL
+                                    Prefs.updateIntervalMs = 1000L
+                                    Prefs.showHudGraph = false
+                                    pushOverlayUpdate()
+                                    Toast.makeText(context, "Mode Ultra-Ringan aktif (Mini + 1.0s + Tanpa Grafik)", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0B1628))
+                            ) {
+                                Text("Terapkan Preset HUD Ultra-Ringan (0 Lag)", color = activeAccent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
 
@@ -880,15 +1026,17 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                         }
                         CyberCard {
                             SectionTitle("PRESET POSISI LAYAR", if (isLand) "LANDSCAPE" else "PORTRAIT", activeAccent)
+                            val topSafeY = ((if (isLand) 14 else 38) * dm.density).toInt()
+                            val sideMargin = (10 * dm.density).toInt()
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 PillChip("Kiri Atas", false, activeAccent, Modifier.weight(1f)) {
-                                    applyPreset(20, 48)
+                                    applyPreset(sideMargin, topSafeY)
                                 }
                                 PillChip("Tengah Atas", false, activeAccent, Modifier.weight(1f)) {
-                                    applyPreset((dm.widthPixels * 0.34f).toInt(), 48)
+                                    applyPreset((dm.widthPixels * 0.34f).toInt(), topSafeY)
                                 }
                                 PillChip("Kanan Atas", false, activeAccent, Modifier.weight(1f)) {
-                                    applyPreset((dm.widthPixels * 0.68f).toInt(), 48)
+                                    applyPreset((dm.widthPixels * 0.68f).toInt(), topSafeY)
                                 }
                             }
                             Spacer(Modifier.height(8.dp))

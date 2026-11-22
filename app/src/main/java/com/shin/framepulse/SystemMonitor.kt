@@ -266,7 +266,8 @@ class SystemMonitor(private val context: Context) {
     private var cachedCpuMaxGhz = 0f
     private var cachedGpuLoad: Int? = null
     private var discoveredGpuPath: String? = null
-    private var gpuScanAttempted = false
+    private var gpuScanAttempts = 0
+    private var lastAutoBoostedPkg: String? = null
     private var cachedCores: List<CoreInfo> = emptyList()
     private var prevTotalCpu = 0L
     private var prevIdleCpu = 0L
@@ -476,10 +477,14 @@ class SystemMonitor(private val context: Context) {
             "com.sec.android.app.launcher",
             "com.google.android.apps.nexuslauncher",
             "com.samsung.android.app.cocktailbarservice",
-            "com.samsung.android.game.gametools"
+            "com.samsung.android.game.gametools",
+            "com.samsung.android.app.smartcapture",
+            "com.samsung.android.honeyboard",
+            "com.google.android.inputmethod.latin"
         )
-        fun extractPkg(lines: List<String>): String? {
+        fun extractFromLines(lines: List<String>, preferPrefix: String? = null): String? {
             for (line in lines) {
+                if (preferPrefix != null && !line.contains(preferPrefix)) continue
                 val match = pkgRegex.find(line) ?: continue
                 val pkg = match.groupValues[1]
                 if (pkg !in ignoredPkgs && !pkg.startsWith("com.android.systemui")) {
@@ -488,10 +493,12 @@ class SystemMonitor(private val context: Context) {
             }
             return null
         }
-        val winLines = runShellCmd("dumpsys window displays | grep -E 'mCurrentFocus|mFocusedApp'")
-        extractPkg(winLines)?.let { return it }
+        // Prefer mFocusedApp (actual fullscreen Activity/Game) before mCurrentFocus (which can be a floating bubble/IME)
+        val winLines = runShellCmd("dumpsys window displays | grep -E 'mFocusedApp|mCurrentFocus'")
+        extractFromLines(winLines, "mFocusedApp")?.let { return it }
         val actLines = runShellCmd("dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity'")
-        return extractPkg(actLines)
+        extractFromLines(actLines)?.let { return it }
+        return extractFromLines(winLines, "mCurrentFocus")
     }
 
     private fun parseLatencyTimestamps(lines: List<String>): List<Long> {
@@ -554,7 +561,8 @@ class SystemMonitor(private val context: Context) {
             allLayers.filter { it.contains("BLAST") }.asReversed().take(4).forEach { candidates.add(it) }
         }
 
-        val nowNs = System.nanoTime()
+        val monoNs = System.nanoTime()
+        val bootNs = SystemClock.elapsedRealtimeNanos()
         var bestLayer: String? = null
         var bestTimestamps: List<Long> = emptyList()
         var bestNewestNs = 0L
@@ -567,7 +575,7 @@ class SystemMonitor(private val context: Context) {
             if (ts.size < 2) continue
             val newest = ts.last()
             val isFg = fgPkg != null && cand.contains(fgPkg)
-            val isFresh = newest >= (nowNs - 1_500_000_000L) && newest <= (nowNs + 500_000_000L)
+            val isFresh = (abs(monoNs - newest) <= 2_000_000_000L) || (abs(bootNs - newest) <= 2_000_000_000L)
 
             val isBetter = when {
                 bestLayer == null -> true
@@ -626,8 +634,8 @@ class SystemMonitor(private val context: Context) {
 
         var needFullScan = lockedLayer == null || layerSilent
 
-        // When locked layer is actively producing frames, only do a lightweight focus check every 4s
-        if (!needFullScan && lockedLayer != null && (nowMs - lastFocusCheckMs >= 4000L)) {
+        // While locked game layer is actively producing frames, minimize system_server overhead (re-check every 12s)
+        if (!needFullScan && lockedLayer != null && (nowMs - lastFocusCheckMs >= 12000L)) {
             lastFocusCheckMs = nowMs
             val currentFg = detectForegroundPackage()
             if (currentFg != null) {
@@ -651,6 +659,18 @@ class SystemMonitor(private val context: Context) {
                     TelemetryHub.activeLockedLayer = foundLayer
                     lastPresentNs = 0L
                     lastSfQueryMs = 0L
+                    val detectedPkg = activeForegroundPkg
+                    if (!detectedPkg.isNullOrBlank() &&
+                        foundLayer.contains("SurfaceView") &&
+                        detectedPkg.matches(Regex("^[a-zA-Z0-9_.]+$")) &&
+                        detectedPkg != "com.shin.framepulse"
+                    ) {
+                        Prefs.lastGamePackage = detectedPkg
+                        if (Prefs.turboAutoBoost && lastAutoBoostedPkg != detectedPkg) {
+                            lastAutoBoostedPkg = detectedPkg
+                            runShellCmd("cmd game mode performance '$detectedPkg'")
+                        }
+                    }
                 }
                 validTimestamps = foundTs
             } else {
@@ -880,8 +900,8 @@ class SystemMonitor(private val context: Context) {
                 val out = runShellCmd("cat '$known'")
                 val parsed = out.firstOrNull()?.trim()?.split(Regex("[\\s%,]+"))?.firstOrNull()?.toIntOrNull()
                 if (parsed != null) return parsed.coerceIn(0, 100)
-            } else if (!gpuScanAttempted) {
-                gpuScanAttempted = true
+            } else if (gpuScanAttempts < 3) {
+                gpuScanAttempts++
                 val cmd = "for p in " + candidatePaths.joinToString(" ") + "; do if [ -r \"\$p\" ]; then echo \"\$p\"; cat \"\$p\"; break; fi; done"
                 val out = runShellCmd(cmd)
                 if (out.size >= 2) {
@@ -908,6 +928,26 @@ class SystemMonitor(private val context: Context) {
                 raw.add(Triple(i, cur, max))
                 if (max > maxClusterKhz) maxClusterKhz = max
                 if (max < minClusterKhz) minClusterKhz = max
+            }
+        }
+        // If direct sysfs read was blocked by SELinux, try a single batched Shizuku shell read
+        if (raw.isEmpty() && ensureShell()) {
+            val cmd = "for i in \$(seq 0 ${coreCount - 1}); do " +
+                "c=\$(cat /sys/devices/system/cpu/cpu\$i/cpufreq/scaling_cur_freq 2>/dev/null); " +
+                "m=\$(cat /sys/devices/system/cpu/cpu\$i/cpufreq/cpuinfo_max_freq 2>/dev/null); " +
+                "[ -n \"\$c\" ] && echo \"\$i \$c \${m:-1}\"; done"
+            for (line in runShellCmd(cmd)) {
+                val p = line.trim().split(Regex("\\s+"))
+                if (p.size >= 3) {
+                    val idx = p[0].toIntOrNull() ?: continue
+                    val cur = p[1].toLongOrNull() ?: continue
+                    val max = (p[2].toLongOrNull() ?: 1L).coerceAtLeast(1L)
+                    if (cur > 0L) {
+                        raw.add(Triple(idx, cur, max))
+                        if (max > maxClusterKhz) maxClusterKhz = max
+                        if (max < minClusterKhz) minClusterKhz = max
+                    }
+                }
             }
         }
         val hasHeterogeneous = maxClusterKhz > minClusterKhz
@@ -958,6 +998,7 @@ class SystemMonitor(private val context: Context) {
             else -> 0f
         }
         cachedWatts = if (voltageV > 0f && ma > 0) voltageV * (ma / 1000f) else 0f
+        if (cachedTempC > 0f) GameBooster.checkThermalGuard(cachedTempC)
     }
 
     private fun readNetwork(nowMs: Long) {
