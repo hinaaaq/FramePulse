@@ -218,13 +218,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
     var sWatt by remember { mutableStateOf(Prefs.showWatt) }
     var sNet by remember { mutableStateOf(Prefs.showNet) }
 
-    val activeAccent = when {
-        themeMode == Prefs.THEME_EMERALD -> EmeraldNeon
-        isPro && themeMode == Prefs.THEME_CRIMSON -> CrimsonAccent
-        isPro && themeMode == Prefs.THEME_AMBER -> AmberVolt
-        isPro && themeMode == Prefs.THEME_VIOLET -> VioletHyper
-        else -> CyberCyan
-    }
+            val activeAccent = activeAppTheme.accent
 
     fun pushOverlayUpdate() {
         if (OverlayService.isRunning) {

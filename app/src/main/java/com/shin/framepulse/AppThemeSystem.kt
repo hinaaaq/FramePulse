@@ -18,6 +18,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -35,6 +36,13 @@ enum class AppThemeId {
     COTTON_CANDY_DEV
 }
 
+enum class AppFontId {
+    SYSTEM_CLEAN,
+    ESPORTS_MONO,
+    MINIMAL_SANS,
+    CLASSIC_SERIF
+}
+
 data class AppThemeSpec(
     val id: AppThemeId,
     val name: String,
@@ -48,9 +56,23 @@ data class AppThemeSpec(
     val isOwnerOnly: Boolean = false
 )
 
+data class AppFontSpec(
+    val id: AppFontId,
+    val name: String,
+    val fontFamily: FontFamily
+)
+
 object AppThemeManager {
     private const val PREF_NAME = "framepulse_theme_prefs"
     private const val KEY_THEME_ID = "selected_theme_id"
+    private const val KEY_FONT_ID = "selected_font_id"
+
+    val allFonts = listOf(
+        AppFontSpec(AppFontId.SYSTEM_CLEAN, "Clean", FontFamily.Default),
+        AppFontSpec(AppFontId.ESPORTS_MONO, "Mono", FontFamily.Monospace),
+        AppFontSpec(AppFontId.MINIMAL_SANS, "Sans", FontFamily.SansSerif),
+        AppFontSpec(AppFontId.CLASSIC_SERIF, "Serif", FontFamily.Serif)
+    )
 
     val allThemes = listOf(
         AppThemeSpec(
@@ -171,6 +193,19 @@ object AppThemeManager {
             .putString(KEY_THEME_ID, id.name)
             .apply()
     }
+
+    fun loadFont(context: Context): AppFontSpec {
+        val saved = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_FONT_ID, AppFontId.SYSTEM_CLEAN.name)
+        return allFonts.firstOrNull { it.id.name == saved } ?: allFonts.first()
+    }
+
+    fun saveFont(context: Context, id: AppFontId) {
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_FONT_ID, id.name)
+            .apply()
+    }
 }
 
 @Composable
@@ -182,6 +217,7 @@ fun ThemePickerDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    var selectedFont by remember { mutableStateOf(AppThemeManager.loadFont(context)) }
     val visibleThemes = remember(isOwner) {
         AppThemeManager.allThemes.filter { !it.isOwnerOnly || isOwner }
     }
@@ -196,17 +232,52 @@ fun ThemePickerDialog(
                     .border(1.dp, currentTheme.accent.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
                     .padding(16.dp)
             ) {
-                Text("Tema Global Aplikasi", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                Text("Tampilan & Font (Terpadu)", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, fontFamily = selectedFont.fontFamily)
                 Text(
-                    if (isOwner) "Mode Owner: seluruh tema Pro + 2 tema rahasia terbuka."
-                    else "Mengubah warna seluruh layar, bar navigasi & aksen grafik.",
+                    if (isOwner) "Mode Owner: semua tema Pro + 2 tema rahasia terbuka."
+                    else "1 pusat pengaturan warna seluruh layar, bar navigasi & font.",
                     color = Color(0xFF94A3B8),
-                    fontSize = 11.sp
+                    fontSize = 11.sp,
+                    fontFamily = selectedFont.fontFamily
                 )
+                Spacer(Modifier.height(10.dp))
+
+                Text("GAYA FONT", color = currentTheme.accent, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                Spacer(Modifier.height(5.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    AppThemeManager.allFonts.forEach { font ->
+                        val active = font.id == selectedFont.id
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (active) currentTheme.accent else currentTheme.cardBg)
+                                .border(0.8.dp, if (active) currentTheme.accent else Color(0xFF334155), RoundedCornerShape(8.dp))
+                                .clickable {
+                                    selectedFont = font
+                                    AppThemeManager.saveFont(context, font.id)
+                                    Toast.makeText(context, "Font ${font.name} disimpan!", Toast.LENGTH_SHORT).show()
+                                }
+                                .padding(vertical = 7.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                font.name,
+                                color = if (active) Color.Black else Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                fontFamily = font.fontFamily
+                            )
+                        }
+                    }
+                }
+
                 Spacer(Modifier.height(12.dp))
+                Text("TEMA WARNA GLOBAL", color = currentTheme.accent, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                Spacer(Modifier.height(6.dp))
 
                 LazyColumn(
-                    modifier = Modifier.heightIn(max = 380.dp),
+                    modifier = Modifier.heightIn(max = 310.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(visibleThemes) { theme ->
@@ -229,7 +300,7 @@ fun ThemePickerDialog(
                                     }
                                     AppThemeManager.saveTheme(context, theme.id)
                                     onSelect(theme)
-                                    Toast.makeText(context, "Tema ${theme.name} diterapkan!", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Tema ${theme.name} diterapkan ke seluruh app!", Toast.LENGTH_SHORT).show()
                                 }
                                 .padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -246,7 +317,7 @@ fun ThemePickerDialog(
                             Spacer(Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text(theme.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Text(theme.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp, fontFamily = selectedFont.fontFamily)
                                     if (theme.isOwnerOnly) {
                                         Box(
                                             modifier = Modifier
@@ -267,7 +338,7 @@ fun ThemePickerDialog(
                                         }
                                     }
                                 }
-                                Text(theme.subtitle, color = Color(0xFFCBD5E1), fontSize = 10.5.sp)
+                                Text(theme.subtitle, color = Color(0xFFCBD5E1), fontSize = 10.5.sp, fontFamily = selectedFont.fontFamily)
                             }
                             if (selected) {
                                 Text("AKTIF", color = theme.accent, fontWeight = FontWeight.ExtraBold, fontSize = 10.sp)
@@ -296,7 +367,9 @@ fun ProHomeCommandHub(
     onOpenThemes: () -> Unit,
     onOpenAbout: () -> Unit
 ) {
-    // Desain bersih tanpa header dobel (ala Apple Control Center / Steam Deck)
+    val context = LocalContext.current
+    val fontFamily = remember(theme) { AppThemeManager.loadFont(context).fontFamily }
+
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -314,9 +387,9 @@ fun ProHomeCommandHub(
                     .clickable { onOpenPresets() }
                     .padding(12.dp)
             ) {
-                Text("Preset Game", color = theme.accent, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+                Text("Preset Game", color = theme.accent, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, fontFamily = fontFamily)
                 Spacer(Modifier.height(2.dp))
-                Text("Optimasi 1-tap Valorant, MLBB, PUBG", color = Color(0xFF94A3B8), fontSize = 10.sp, lineHeight = 13.sp)
+                Text("Optimasi 1-tap Valorant, MLBB, PUBG", color = Color(0xFF94A3B8), fontSize = 10.sp, lineHeight = 13.sp, fontFamily = fontFamily)
             }
 
             Column(
@@ -328,9 +401,9 @@ fun ProHomeCommandHub(
                     .clickable { onOpenLeaderboard() }
                     .padding(12.dp)
             ) {
-                Text("Leaderboard", color = theme.accentSecondary, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+                Text("Leaderboard", color = theme.accentSecondary, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, fontFamily = fontFamily)
                 Spacer(Modifier.height(2.dp))
-                Text("Rank Global & Simpan Kartu Pamer", color = Color(0xFF94A3B8), fontSize = 10.sp, lineHeight = 13.sp)
+                Text("Rank Global & Simpan Kartu Pamer", color = Color(0xFF94A3B8), fontSize = 10.sp, lineHeight = 13.sp, fontFamily = fontFamily)
             }
         }
 
@@ -343,13 +416,13 @@ fun ProHomeCommandHub(
                     .weight(1f)
                     .clip(RoundedCornerShape(10.dp))
                     .background(theme.cardBg)
-                    .border(0.8.dp, theme.accent.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                    .border(0.8.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
                     .clickable { onOpenThemes() }
                     .padding(horizontal = 12.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("Tema: ${theme.name}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, maxLines = 1)
+                Text("Tampilan: ${theme.name}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, maxLines = 1, fontFamily = fontFamily)
                 Text(theme.iconGlyph, color = theme.accent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
 
@@ -362,7 +435,7 @@ fun ProHomeCommandHub(
                     .padding(horizontal = 14.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("About", color = Color(0xFFCBD5E1), fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+                Text("About", color = Color(0xFFCBD5E1), fontWeight = FontWeight.SemiBold, fontSize = 11.sp, fontFamily = fontFamily)
             }
         }
     }
