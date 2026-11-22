@@ -494,7 +494,8 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
             when (selectedTab) {
                     0 -> {
                         item {
-                            val ownerFlag = ProLicenseManager.isOwnerEmail(linkedEmail)
+                            val homeEmail = Prefs.linkedGoogleEmail
+                            val ownerFlag = ProLicenseManager.isOwnerEmail(homeEmail)
                             val proFlag = ProLicenseManager.isProUnlocked() || ownerFlag
                             var activeAppTheme by remember(proFlag, ownerFlag) {
                                 mutableStateOf(AppThemeManager.loadTheme(context, proFlag, ownerFlag))
@@ -512,7 +513,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 GamePresetDialog(isPro = proFlag, onDismiss = { showHomePresets = false })
                             }
                             if (showHomeLeaderboard) {
-                                LeaderboardDialog(email = linkedEmail, isPro = proFlag, isOwner = ownerFlag, onDismiss = { showHomeLeaderboard = false })
+                                LeaderboardDialog(email = homeEmail, isPro = proFlag, isOwner = ownerFlag, onDismiss = { showHomeLeaderboard = false })
                             }
                             if (showHomeThemes) {
                                 ThemePickerDialog(
