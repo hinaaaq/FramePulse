@@ -1,18 +1,26 @@
 # FramePulse Pro — Project Handoff
 
 ## Current Status
-- **Version:** 2.5.3 (`versionCode = 6`)
+- **Version:** 2.5.4 (`versionCode = 7`)
 - **Package:** `com.shin.framepulse`
 - **Stack:** Kotlin 1.9.24, Jetpack Compose (BOM 2024.06.00, Material 3), AGP 8.5.2, compileSdk 35, targetSdk 34, minSdk 26, Shizuku 13.1.5.
 - **Device Tested:** Samsung Galaxy A24 (`SM-A245F`, Android 16 / API 36, 90Hz, Helio G99).
 
-## Fixed in v2.5.3
-- **True Game FPS Engine Overhaul (`SystemMonitor.kt`):**
-  - Detects the active foreground package via `dumpsys window displays` (`mCurrentFocus`/`mFocusedApp`) and `dumpsys activity activities`.
-  - Probes up to 8 prioritized candidate SurfaceFlinger layers (foreground `SurfaceView`+`BLAST` first) instead of blindly checking only `lastOrNull`, eliminating false fallback to 90Hz Choreographer and preventing floating bubble overlays from stealing the layer lock.
-  - Switched live FPS math to a deduplicated 1-second rolling window over SurfaceFlinger timestamps for smooth, exact FPS matching in-game counters (e.g., 60 FPS cap on 90Hz displays).
-- **HUD Source Clarity (`OverlayService.kt`):** Shows `~` prefix (`~89FPS`) whenever falling back to Choreographer screen refresh rate, and clean `60FPS` when locked onto True Game SurfaceFlinger frames.
-- **SurfaceFlinger Diagnostics (`MainActivity.kt`):** Added one-tap "Salin Info SurfaceFlinger (Debug FPS)" button in Setup tab.
+## Deep Audit Fixes in v2.5.4 (Cumulative with v2.5.3)
+1. **Zero-Deadlock Shell (`SystemMonitor.kt`):** Uses `printf '\n__FP_END__\n'` so sysfs nodes without trailing newlines never freeze the sensor worker thread.
+2. **ANR-Free Shutdown (`SystemMonitor.kt`):** Destroys `@Volatile shellProcess` outside `shellLock` before cleanup so stopping HUD never blocks the Main UI thread.
+3. **Stutter-Free & Fresh SurfaceFlinger Locking (`SystemMonitor.kt`):**
+   - Verifies timestamp freshness against `System.nanoTime()` (<= 1.5s) so dead lobby/video `SurfaceView` layers are never locked.
+   - Replaces heavy 3-second full re-scans with a lightweight 4-second foreground-package check while frames are actively flowing.
+4. **Race-Free Diagnostics (`MainActivity.kt`, `TelemetryHub`):** Shares `activeLockedLayer` / `activeForegroundPkg` via `TelemetryHub` and runs diagnostic dumps in an isolated `SystemMonitor` instance.
+5. **Gaming Overlay Ergonomics (`OverlayService.kt`, `Prefs.kt`):**
+   - Separate Portrait vs Landscape saved HUD coordinates so exiting a horizontal game never resets your gaming HUD spot.
+   - Added `LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES` for fullscreen punch-hole cutout positioning.
+   - Instant `[REC]` HUD refresh, Quick Settings Tile auto-sync (`requestListeningState`), and `~` fallback FPS indicator.
+6. **Sensor & Rendering Polish (`SystemMonitor.kt`, `HudSparklineView.kt`, `FramePulseApp.kt`, `UiComponents.kt`, `CrashActivity.kt`):**
+   - Fixed first-sample `/proc/stat` since-boot CPU spike, `0.0W` reset when `0mA`, microvolt normalization, and charging (`+`/`-`) indicator.
+   - Zero-allocation `Path` reuse and cached `LinearGradient` in `HudSparklineView`.
+   - Dynamic `versionName` in crash reports, Android 15/16 `statusBarsPadding()`/`navigationBarsPadding()`, and Minimal-mode text shadow in HUD Live Preview.
 
 ## Next Roadmap (Phase 3)
 - Per-game auto-HUD trigger (detect foreground package via Shizuku and auto-start/stop HUD).

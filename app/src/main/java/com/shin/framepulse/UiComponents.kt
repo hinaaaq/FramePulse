@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -341,7 +342,8 @@ fun HudLivePreviewBox(
     val separator = if (layoutMode == Prefs.LAYOUT_VERTICAL) "\n" else " │ "
     val annotated = buildAnnotatedString {
         entries.forEachIndexed { idx, (txt, col) ->
-            withStyle(SpanStyle(color = col, fontWeight = FontWeight.Bold)) {
+            val textShadow = if (effectiveAlpha <= 0.08f) Shadow(Color.Black, Offset(1.5f, 1.5f), 4f) else null
+            withStyle(SpanStyle(color = col, fontWeight = FontWeight.Bold, shadow = textShadow)) {
                 append(txt)
             }
             if (idx < entries.lastIndex) {

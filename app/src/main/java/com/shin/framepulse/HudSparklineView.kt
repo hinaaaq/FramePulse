@@ -35,6 +35,11 @@ class HudSparklineView(context: Context) : View(context) {
         pathEffect = DashPathEffect(floatArrayOf(6f, 6f), 0f)
     }
 
+    private val strokePath = Path()
+    private val fillPath = Path()
+    private var cachedShaderHeight: Float = -1f
+    private var cachedShaderColor: Int = 0
+
     private var points: List<Int> = emptyList()
     private var accentColor: Int = Color.parseColor("#38BDF8")
     private var maxScaleFps: Int = 90
@@ -60,8 +65,8 @@ class HudSparklineView(context: Context) : View(context) {
 
         if (points.size < 2) return
 
-        val strokePath = Path()
-        val fillPath = Path()
+        strokePath.reset()
+        fillPath.reset()
         val stepX = (w - 4f) / (points.size - 1).coerceAtLeast(1)
         var lastX = 0f
         var lastY = h
@@ -86,12 +91,16 @@ class HudSparklineView(context: Context) : View(context) {
             }
         }
 
-        fillPaint.shader = LinearGradient(
-            0f, 0f, 0f, h,
-            Color.argb(95, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor)),
-            Color.TRANSPARENT,
-            Shader.TileMode.CLAMP
-        )
+        if (cachedShaderHeight != h || cachedShaderColor != accentColor) {
+            cachedShaderHeight = h
+            cachedShaderColor = accentColor
+            fillPaint.shader = LinearGradient(
+                0f, 0f, 0f, h,
+                Color.argb(95, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor)),
+                Color.TRANSPARENT,
+                Shader.TileMode.CLAMP
+            )
+        }
         canvas.drawPath(fillPath, fillPaint)
         canvas.drawPath(strokePath, linePaint)
         canvas.drawCircle(lastX, lastY, 3.2f, dotPaint)

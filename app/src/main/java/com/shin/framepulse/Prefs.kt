@@ -117,6 +117,25 @@ object Prefs {
         get() = sp().getInt("pos_y", 48)
         set(v) = sp().edit().putInt("pos_y", v).apply()
 
+    var posXLand: Int
+        get() = sp().getInt("pos_x_land", posX)
+        set(v) = sp().edit().putInt("pos_x_land", v).apply()
+
+    var posYLand: Int
+        get() = sp().getInt("pos_y_land", posY)
+        set(v) = sp().edit().putInt("pos_y_land", v).apply()
+
+    fun getPosX(isLandscape: Boolean): Int = if (isLandscape) posXLand else posX
+    fun getPosY(isLandscape: Boolean): Int = if (isLandscape) posYLand else posY
+
+    fun setPos(isLandscape: Boolean, x: Int, y: Int) {
+        if (isLandscape) {
+            sp().edit().putInt("pos_x_land", x).putInt("pos_y_land", y).apply()
+        } else {
+            sp().edit().putInt("pos_x", x).putInt("pos_y", y).apply()
+        }
+    }
+
     var showQuickButtons: Boolean
         get() = sp().getBoolean("show_quick_buttons", false)
         set(v) = sp().edit().putBoolean("show_quick_buttons", v).apply()

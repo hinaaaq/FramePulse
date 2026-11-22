@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -207,7 +209,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     shizukuConnected = localMonitor.isShizukuReady()
                     benchmarkHistory = TelemetryHub.loadHistory()
                     lastCrashLog = Prefs.lastCrashLog
-                    if (OverlayService.isRunning) localMonitor.stop() else localMonitor.start()
+                    if (OverlayService.isRunning) { if (localMonitor.isRunning()) localMonitor.stop() } else localMonitor.start()
                 }
                 Lifecycle.Event.ON_STOP -> {
                     isAppForeground = false
@@ -227,7 +229,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
     LaunchedEffect(isAppForeground) {
         while (isAppForeground) {
             val running = OverlayService.isRunning
-            if (running) localMonitor.stop()
+            if (running && localMonitor.isRunning()) localMonitor.stop()
             val data = if (running) {
                 TelemetryHub.latest
             } else {
@@ -259,6 +261,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(TopBarSurface)
+                    .statusBarsPadding()
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -279,7 +282,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 .border(1.dp, activeAccent.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
                                 .padding(horizontal = 6.dp, vertical = 1.dp)
                         ) {
-                            Text("PRO 2.5.3", color = activeAccent, fontSize = 9.5.sp, fontWeight = FontWeight.ExtraBold)
+                            Text("PRO 2.5.4", color = activeAccent, fontSize = 9.5.sp, fontWeight = FontWeight.ExtraBold)
                         }
                     }
                     Spacer(Modifier.height(4.dp))
@@ -585,7 +588,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     fontFamily = FontFamily.Monospace
                                 )
                                 Text(
-                                    text = String.format(Locale.US, "%.1f W • %d mA", telemetry.powerWatts, telemetry.currentMa),
+                                    text = String.format(Locale.US, "%s%.1f W • %d mA", if (telemetry.isCharging) "+" else "-", telemetry.powerWatts, telemetry.currentMa),
                                     color = AmberVolt,
                                     fontSize = 11.sp,
                                     fontFamily = FontFamily.Monospace
@@ -870,29 +873,34 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
 
                     item {
                         val dm = context.resources.displayMetrics
+                        val isLand = context.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+                        fun applyPreset(x: Int, y: Int) {
+                            Prefs.setPos(isLand, x, y)
+                            pushOverlayUpdate()
+                        }
                         CyberCard {
-                            SectionTitle("PRESET POSISI LAYAR")
+                            SectionTitle("PRESET POSISI LAYAR", if (isLand) "LANDSCAPE" else "PORTRAIT", activeAccent)
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 PillChip("Kiri Atas", false, activeAccent, Modifier.weight(1f)) {
-                                    Prefs.posX = 20; Prefs.posY = 48; pushOverlayUpdate()
+                                    applyPreset(20, 48)
                                 }
                                 PillChip("Tengah Atas", false, activeAccent, Modifier.weight(1f)) {
-                                    Prefs.posX = (dm.widthPixels * 0.34f).toInt(); Prefs.posY = 48; pushOverlayUpdate()
+                                    applyPreset((dm.widthPixels * 0.34f).toInt(), 48)
                                 }
                                 PillChip("Kanan Atas", false, activeAccent, Modifier.weight(1f)) {
-                                    Prefs.posX = (dm.widthPixels * 0.68f).toInt(); Prefs.posY = 48; pushOverlayUpdate()
+                                    applyPreset((dm.widthPixels * 0.68f).toInt(), 48)
                                 }
                             }
                             Spacer(Modifier.height(8.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 PillChip("Kiri Bawah", false, activeAccent, Modifier.weight(1f)) {
-                                    Prefs.posX = 20; Prefs.posY = (dm.heightPixels * 0.85f).toInt(); pushOverlayUpdate()
+                                    applyPreset(20, (dm.heightPixels * 0.85f).toInt())
                                 }
                                 PillChip("Tengah Bawah", false, activeAccent, Modifier.weight(1f)) {
-                                    Prefs.posX = (dm.widthPixels * 0.34f).toInt(); Prefs.posY = (dm.heightPixels * 0.85f).toInt(); pushOverlayUpdate()
+                                    applyPreset((dm.widthPixels * 0.34f).toInt(), (dm.heightPixels * 0.85f).toInt())
                                 }
                                 PillChip("Kanan Bawah", false, activeAccent, Modifier.weight(1f)) {
-                                    Prefs.posX = (dm.widthPixels * 0.68f).toInt(); Prefs.posY = (dm.heightPixels * 0.85f).toInt(); pushOverlayUpdate()
+                                    applyPreset((dm.widthPixels * 0.68f).toInt(), (dm.heightPixels * 0.85f).toInt())
                                 }
                             }
                         }
@@ -1022,7 +1030,14 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 onClick = {
                                     uiScope.launch {
                                         val report = withContext(Dispatchers.IO) {
-                                            try { localMonitor.dumpSurfaceFlingerDiagnostics() } catch (t: Throwable) { "Error: ${t.message}" }
+                                            val diagMon = SystemMonitor(context)
+                                            try {
+                                                diagMon.dumpSurfaceFlingerDiagnostics()
+                                            } catch (t: Throwable) {
+                                                "Error: ${t.message}"
+                                            } finally {
+                                                diagMon.stop()
+                                            }
                                         }
                                         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                         cm.setPrimaryClip(ClipData.newPlainText("FramePulse SF Info", report))

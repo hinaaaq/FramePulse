@@ -47,6 +47,7 @@ data class TelemetryData(
     val ramTotalGb: Float = 0f,
     val batteryTempC: Float = 0f,
     val batteryPercent: Int = 0,
+    val isCharging: Boolean = false,
     val powerWatts: Float = 0f,
     val currentMa: Int = 0,
     val netDownKbps: Float = 0f,
@@ -73,6 +74,8 @@ object TelemetryHub {
     @Volatile var recordingStartMs: Long = 0L
     @Volatile var lastSummary: BenchmarkSummary? = null
     @Volatile var isAppForeground: Boolean = true
+    @Volatile var activeLockedLayer: String? = null
+    @Volatile var activeForegroundPkg: String? = null
 
     private val recordedFps = mutableListOf<Int>()
     private val recordedFrameTimesMs = mutableListOf<Float>()
@@ -243,13 +246,14 @@ class SystemMonitor(private val context: Context) {
     private var choreoFps = 0
     private var choreoFrameMs = 0f
 
-    private var shellProcess: Process? = null
+    @Volatile private var shellProcess: Process? = null
     private var shellWriter: BufferedWriter? = null
     private var shellReader: BufferedReader? = null
     private var activeGameLayer: String? = null
     private var activeSurfaceLabel: String = ""
     private var activeForegroundPkg: String? = null
     private var lastLayerScanMs = 0L
+    private var lastFocusCheckMs = 0L
     private var lastPresentNs = 0L
     private var lastSfQueryMs = 0L
     private var sfFps = 0
@@ -272,6 +276,7 @@ class SystemMonitor(private val context: Context) {
     private var cachedRamTotal = 0f
     private var cachedTempC = 0f
     private var cachedBattPct = 0
+    private var cachedIsCharging = false
     private var cachedWatts = 0f
     private var cachedCurrentMa = 0
     private var cachedDownKbps = 0f
@@ -317,7 +322,10 @@ class SystemMonitor(private val context: Context) {
         setChoreographerEnabled(true)
     }
 
+    fun isRunning(): Boolean = running
+
     fun stop() {
+        if (!running && shellProcess == null) return
         running = false
         setChoreographerEnabled(false)
         closeShell()
@@ -406,8 +414,15 @@ class SystemMonitor(private val context: Context) {
         }
     }
 
-    private fun closeShell() = synchronized(shellLock) {
-        closeShellInternal()
+    private fun closeShell() {
+        // Destroy process first outside lock so any blocked readLine() unblocks immediately without UI ANR
+        val proc = shellProcess
+        if (proc != null) {
+            try { proc.destroy() } catch (_: Throwable) {}
+        }
+        synchronized(shellLock) {
+            closeShellInternal()
+        }
     }
 
     private fun closeShellInternal() {
@@ -426,7 +441,7 @@ class SystemMonitor(private val context: Context) {
         val writer = shellWriter ?: return emptyList()
         val reader = shellReader ?: return emptyList()
         return try {
-            writer.write("{ $cmd ; } 2>/dev/null\necho __FP_END__\n")
+            writer.write("{ $cmd ; } 2>/dev/null\nprintf '\\n__FP_END__\\n'\n")
             writer.flush()
             val out = ArrayList<String>(132)
             while (true) {
@@ -520,6 +535,7 @@ class SystemMonitor(private val context: Context) {
     private fun scanBestActiveLayer(): Pair<String, List<Long>>? {
         val fgPkg = detectForegroundPackage()
         activeForegroundPkg = fgPkg
+        TelemetryHub.activeForegroundPkg = fgPkg
         val allLayers = runShellCmd("dumpsys SurfaceFlinger --list")
             .map { it.trim() }
             .filter { it.isNotEmpty() && !isExcludedLayer(it) }
@@ -538,10 +554,12 @@ class SystemMonitor(private val context: Context) {
             allLayers.filter { it.contains("BLAST") }.asReversed().take(4).forEach { candidates.add(it) }
         }
 
+        val nowNs = System.nanoTime()
         var bestLayer: String? = null
         var bestTimestamps: List<Long> = emptyList()
         var bestNewestNs = 0L
         var bestIsFg = false
+        var bestIsFresh = false
 
         for (cand in candidates.take(8)) {
             val safe = cand.replace("'", "'\\''")
@@ -549,8 +567,12 @@ class SystemMonitor(private val context: Context) {
             if (ts.size < 2) continue
             val newest = ts.last()
             val isFg = fgPkg != null && cand.contains(fgPkg)
+            val isFresh = newest >= (nowNs - 1_500_000_000L) && newest <= (nowNs + 500_000_000L)
+
             val isBetter = when {
                 bestLayer == null -> true
+                isFresh && !bestIsFresh -> true
+                !isFresh && bestIsFresh -> false
                 isFg && !bestIsFg -> newest >= bestNewestNs - 500_000_000L
                 !isFg && bestIsFg -> newest > bestNewestNs + 2_000_000_000L
                 else -> newest > bestNewestNs
@@ -560,21 +582,26 @@ class SystemMonitor(private val context: Context) {
                 bestTimestamps = ts
                 bestNewestNs = newest
                 bestIsFg = isFg
-                // Fast exit when a foreground SurfaceView layer already has dense recent timestamps
-                if (isFg && cand.contains("SurfaceView") && ts.size >= 10) break
+                bestIsFresh = isFresh
+                // Only fast-break when a foreground SurfaceView is confirmed actively rendering right now
+                if (isFg && isFresh && cand.contains("SurfaceView") && ts.size >= 5) break
             }
         }
         return if (bestLayer != null) bestLayer to bestTimestamps else null
     }
 
     fun dumpSurfaceFlingerDiagnostics(): String {
-        if (!ensureShell()) return "Shizuku belum aktif / shell gagal dibuka."
+        if (!isShizukuReady()) return "Shizuku belum aktif / izin belum diberikan."
+        val useOwnShell = !ensureShell()
+        if (useOwnShell) return "Gagal membuka shell Shizuku."
         return buildString {
-            val fg = detectForegroundPackage()
+            val fg = detectForegroundPackage() ?: TelemetryHub.activeForegroundPkg
+            val locked = activeGameLayer ?: TelemetryHub.activeLockedLayer
             appendLine("Foreground Pkg: ${fg ?: "(none)"}")
-            appendLine("Locked Layer: ${activeGameLayer ?: "(none)"}")
+            appendLine("Locked Layer: ${locked ?: "(none)"}")
             appendLine("Display Hz: ${detectDisplayRefreshHz()}Hz")
-            appendLine("Last SF FPS: $sfFps (isTrue=${activeGameLayer != null})")
+            appendLine("Latest HUD FPS: ${TelemetryHub.latest.fps} (isTrue=${TelemetryHub.latest.isTrueGameFps})")
+            appendLine("CPU Source: ${TelemetryHub.latest.cpuSource} | GPU: ${TelemetryHub.latest.gpuLoadPercent ?: "N/A"}")
             appendLine("--- Focus ---")
             runShellCmd("dumpsys window displays | grep -E 'mCurrentFocus|mFocusedApp'").take(4).forEach { appendLine(it.trim()) }
             appendLine("--- SurfaceFlinger Layers (filtered) ---")
@@ -582,7 +609,7 @@ class SystemMonitor(private val context: Context) {
                 .map { it.trim() }
                 .filter { it.contains("SurfaceView") || it.contains("BLAST") || (fg != null && it.contains(fg)) }
             layers.takeLast(15).forEach { appendLine(it) }
-            activeGameLayer?.let { layer ->
+            locked?.let { layer ->
                 appendLine("--- Latency Sample ---")
                 val safe = layer.replace("'", "'\\''")
                 runShellCmd("dumpsys SurfaceFlinger --latency '$safe'").take(8).forEach { appendLine(it) }
@@ -594,18 +621,34 @@ class SystemMonitor(private val context: Context) {
         if (!ensureShell()) return false
 
         var validTimestamps: List<Long>? = null
-        val staleScan = activeGameLayer == null ||
-            nowMs - lastLayerScanMs >= 3000L ||
-            (lastSfQueryMs > 0L && nowMs - lastSfQueryMs >= 2000L)
+        val lockedLayer = activeGameLayer
+        val layerSilent = lastSfQueryMs > 0L && (nowMs - lastSfQueryMs >= 1500L)
 
-        if (staleScan) {
+        var needFullScan = lockedLayer == null || layerSilent
+
+        // When locked layer is actively producing frames, only do a lightweight focus check every 4s
+        if (!needFullScan && lockedLayer != null && (nowMs - lastFocusCheckMs >= 4000L)) {
+            lastFocusCheckMs = nowMs
+            val currentFg = detectForegroundPackage()
+            if (currentFg != null) {
+                activeForegroundPkg = currentFg
+                TelemetryHub.activeForegroundPkg = currentFg
+                if (!lockedLayer.contains(currentFg)) {
+                    needFullScan = true
+                }
+            }
+        }
+
+        if (needFullScan && (lockedLayer == null || nowMs - lastLayerScanMs >= 1500L)) {
             lastLayerScanMs = nowMs
+            lastFocusCheckMs = nowMs
             val scanned = scanBestActiveLayer()
             if (scanned != null) {
                 val (foundLayer, foundTs) = scanned
                 if (foundLayer != activeGameLayer) {
                     activeGameLayer = foundLayer
                     activeSurfaceLabel = extractSurfaceLabel(foundLayer)
+                    TelemetryHub.activeLockedLayer = foundLayer
                     lastPresentNs = 0L
                     lastSfQueryMs = 0L
                 }
@@ -613,6 +656,7 @@ class SystemMonitor(private val context: Context) {
             } else {
                 activeGameLayer = null
                 activeSurfaceLabel = ""
+                TelemetryHub.activeLockedLayer = null
                 return false
             }
         }
@@ -624,6 +668,7 @@ class SystemMonitor(private val context: Context) {
             if (validTimestamps.isEmpty()) {
                 activeGameLayer = null
                 activeSurfaceLabel = ""
+                TelemetryHub.activeLockedLayer = null
                 return false
             }
         }
@@ -633,7 +678,6 @@ class SystemMonitor(private val context: Context) {
         if (lastPresentNs == 0L) {
             lastPresentNs = newestNs
             lastSfQueryMs = nowMs
-            // Initial rolling 1-second estimate immediately so FPS doesn't sit at 0 on first sample
             val window = validTimestamps.filter { it >= newestNs - 1_000_000_000L }
             if (window.size >= 2) {
                 val spanNs = window.last() - window.first()
@@ -654,7 +698,6 @@ class SystemMonitor(private val context: Context) {
             return true
         }
 
-        // Record true per-frame intervals since lastPresentNs for accurate 1% Low benchmark
         val freshTimestamps = validTimestamps.filter { it > lastPresentNs }
         if (freshTimestamps.isNotEmpty()) {
             val frameTimes = ArrayList<Float>(freshTimestamps.size)
@@ -670,7 +713,7 @@ class SystemMonitor(private val context: Context) {
                 TelemetryHub.recordFrameTimes(frameTimes)
             }
 
-            // Compute smooth, jitter-free FPS from the rolling 1-second window of SurfaceFlinger timestamps
+            // Rolling 1-second window over SurfaceFlinger timestamps for accurate, jitter-free FPS
             val window = validTimestamps.filter { it >= newestNs - 1_000_000_000L }
             val measured: Int? = if (window.size >= 2) {
                 val spanNs = window.last() - window.first()
@@ -735,6 +778,7 @@ class SystemMonitor(private val context: Context) {
             ramTotalGb = cachedRamTotal,
             batteryTempC = cachedTempC,
             batteryPercent = cachedBattPct,
+            isCharging = cachedIsCharging,
             powerWatts = cachedWatts,
             currentMa = cachedCurrentMa,
             netDownKbps = cachedDownKbps,
@@ -757,10 +801,18 @@ class SystemMonitor(private val context: Context) {
         val softirq = toks.getOrNull(7)?.toLongOrNull() ?: 0L
         val total = user + nice + sys + idle + iowait + irq + softirq
         val idleAll = idle + iowait
+        val isFirstSample = (prevTotalCpu == 0L)
         val diffTotal = total - prevTotalCpu
         val diffIdle = idleAll - prevIdleCpu
         prevTotalCpu = total
         prevIdleCpu = idleAll
+        if (isFirstSample) {
+            return if (cachedCores.isNotEmpty()) {
+                cachedCores.map { it.loadPercent }.average().roundToInt().coerceIn(0, 100)
+            } else {
+                cachedCpuLoad
+            }
+        }
         return if (diffTotal > 0L) {
             (((diffTotal - diffIdle) * 100L) / diffTotal).toInt().coerceIn(0, 100)
         } else {
@@ -884,11 +936,13 @@ class SystemMonitor(private val context: Context) {
     private fun readBatteryAndThermal() {
         val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val tempTenths = intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0
-        val voltageMv = intent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) ?: 0
+        val rawVoltage = intent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) ?: 0
         val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
         val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+        val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
         if (tempTenths > 0) cachedTempC = tempTenths / 10f
         if (level >= 0 && scale > 0) cachedBattPct = ((level * 100f) / scale).roundToInt().coerceIn(0, 100)
+        cachedIsCharging = (status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL)
 
         val rawCurrent = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
         val ma = if (rawCurrent == Int.MIN_VALUE) {
@@ -898,9 +952,12 @@ class SystemMonitor(private val context: Context) {
             if (absRaw > 10_000L) (absRaw / 1000L).toInt() else absRaw.toInt()
         }
         cachedCurrentMa = ma
-        if (voltageMv > 0 && ma > 0) {
-            cachedWatts = (voltageMv / 1000f) * (ma / 1000f)
+        val voltageV = when {
+            rawVoltage > 100_000 -> rawVoltage / 1_000_000f
+            rawVoltage > 0 -> rawVoltage / 1000f
+            else -> 0f
         }
+        cachedWatts = if (voltageV > 0f && ma > 0) voltageV * (ma / 1000f) else 0f
     }
 
     private fun readNetwork(nowMs: Long) {

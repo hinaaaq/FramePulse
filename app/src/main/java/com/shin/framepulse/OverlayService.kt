@@ -6,7 +6,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ComponentName
 import android.content.Context
+import android.service.quicksettings.TileService
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.content.res.Configuration
@@ -112,10 +114,23 @@ class OverlayService : Service() {
         createNotificationChannel()
     }
 
+    private fun isLandscape(): Boolean {
+        return resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    }
+
+    private fun syncQsTile() {
+        try {
+            TileService.requestListeningState(this, ComponentName(this, FramePulseTileService::class.java))
+        } catch (_: Throwable) {}
+    }
+
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if (isRunning) {
             mainHandler.post {
+                val land = newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
+                layoutParams.x = Prefs.getPosX(land)
+                layoutParams.y = Prefs.getPosY(land)
                 clampPositionToScreen()
                 rootContainer?.let {
                     try {
@@ -170,6 +185,7 @@ class OverlayService : Service() {
                 setupOverlayView()
                 applyVisualConfig()
                 monitor.start()
+                syncQsTile()
                 mainHandler.removeCallbacks(updateRunnable)
                 mainHandler.post(updateRunnable)
             } catch (_: Throwable) {
@@ -253,6 +269,7 @@ class OverlayService : Service() {
                 recBtnView?.text = "STOP"
             }
             lastRenderedHash = 0
+            lastTelemetry?.let { renderTelemetry(it) }
         }
 
         val modeBtn = makeActionChip("MODE", "#A78BFA") {
@@ -291,9 +308,13 @@ class OverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = Prefs.posX
-            y = Prefs.posY
+            val land = isLandscape()
+            x = Prefs.getPosX(land)
+            y = Prefs.getPosY(land)
             alpha = 1.0f
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
         }
 
         var initialX = 0
@@ -333,8 +354,7 @@ class OverlayService : Service() {
                         } else {
                             clampPositionToScreen()
                         }
-                        Prefs.posX = layoutParams.x
-                        Prefs.posY = layoutParams.y
+                        Prefs.setPos(isLandscape(), layoutParams.x, layoutParams.y)
                         try {
                             windowManager.updateViewLayout(rootContainer, layoutParams)
                         } catch (_: Exception) {
@@ -429,8 +449,9 @@ class OverlayService : Service() {
         quickActionRow?.visibility =
             if (Prefs.showQuickButtons && !isTouchLocked) View.VISIBLE else View.GONE
 
-        layoutParams.x = Prefs.posX
-        layoutParams.y = Prefs.posY
+        val land = isLandscape()
+        layoutParams.x = Prefs.getPosX(land)
+        layoutParams.y = Prefs.getPosY(land)
         clampPositionToScreen()
         rootContainer?.let {
             try {
@@ -520,7 +541,8 @@ class OverlayService : Service() {
                 items.add("BAT ${data.batteryPercent}%" to Color.parseColor("#34D399"))
             }
             if (Prefs.showWatt) {
-                items.add("${monitor.formatFloat(data.powerWatts, 1)}W" to Color.parseColor("#FBBF24"))
+                val wPrefix = if (data.isCharging) "+" else "-"
+                items.add("$wPrefix${monitor.formatFloat(data.powerWatts, 1)}W" to if (data.isCharging) Color.parseColor("#34D399") else Color.parseColor("#FBBF24"))
             }
             if (Prefs.showNet) {
                 items.add("↓${data.netDownKbps.toInt()}K" to Color.parseColor("#34D399"))
@@ -600,6 +622,7 @@ class OverlayService : Service() {
     override fun onDestroy() {
         isRunning = false
         isTouchLocked = false
+        syncQsTile()
         mainHandler.removeCallbacksAndMessages(null)
         monitor.stop()
         workerExecutor.shutdownNow()

@@ -17,6 +17,15 @@ class FramePulseApp : Application() {
         installCrashHandler()
     }
 
+    private fun resolveVersionName(): String {
+        return try {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown"
+        } catch (_: Throwable) {
+            "unknown"
+        }
+    }
+
     private fun installCrashHandler() {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
@@ -24,8 +33,9 @@ class FramePulseApp : Application() {
                 val sw = StringWriter()
                 throwable.printStackTrace(PrintWriter(sw))
                 val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+                val ver = resolveVersionName()
                 val report = buildString {
-                    appendLine("FramePulse Pro v2.5 Crash Report")
+                    appendLine("FramePulse Pro v$ver Crash Report")
                     appendLine("Time: $ts")
                     appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE}, API ${Build.VERSION.SDK_INT})")
                     appendLine("Thread: ${thread.name}")
