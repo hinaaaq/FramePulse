@@ -12,9 +12,16 @@ import android.view.View
 
 class HudSparklineView(context: Context) : View(context) {
 
+    private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 6.5f
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 3f
+        strokeWidth = 2.8f
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
         color = Color.parseColor("#38BDF8")
@@ -24,15 +31,19 @@ class HudSparklineView(context: Context) : View(context) {
         style = Paint.Style.FILL
     }
 
+    private val dotHaloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
 
     private val refLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 1.2f
-        color = Color.argb(65, 255, 255, 255)
-        pathEffect = DashPathEffect(floatArrayOf(6f, 6f), 0f)
+        strokeWidth = 1.1f
+        color = Color.argb(55, 255, 255, 255)
+        pathEffect = DashPathEffect(floatArrayOf(5f, 5f), 0f)
     }
 
     private val strokePath = Path()
@@ -49,7 +60,9 @@ class HudSparklineView(context: Context) : View(context) {
         accentColor = themeColor
         maxScaleFps = scaleMaxFps.coerceIn(60, 144)
         linePaint.color = themeColor
+        glowPaint.color = Color.argb(65, Color.red(themeColor), Color.green(themeColor), Color.blue(themeColor))
         dotPaint.color = themeColor
+        dotHaloPaint.color = Color.argb(80, Color.red(themeColor), Color.green(themeColor), Color.blue(themeColor))
         invalidate()
     }
 
@@ -59,32 +72,34 @@ class HudSparklineView(context: Context) : View(context) {
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
 
+        val padY = 4f
         val refFps = if (maxScaleFps <= 65) 30f else 60f
-        val yRef = h - ((refFps / maxScaleFps.toFloat()) * (h - 6f)) - 3f
+        val yRef = h - ((refFps / maxScaleFps.toFloat()) * (h - padY * 2f)) - padY
         canvas.drawLine(0f, yRef, w, yRef, refLinePaint)
 
         if (points.size < 2) return
 
         strokePath.reset()
         fillPath.reset()
-        val stepX = (w - 4f) / (points.size - 1).coerceAtLeast(1)
-        var lastX = 0f
-        var lastY = h
+        val stepX = (w - 6f) / (points.size - 1).coerceAtLeast(1)
 
+        var prevX = 0f
+        var prevY = h
         points.forEachIndexed { idx, fpsVal ->
             val clamped = fpsVal.coerceIn(0, maxScaleFps)
-            val x = idx * stepX
-            val y = h - ((clamped / maxScaleFps.toFloat()) * (h - 6f)) - 3f
+            val x = idx * stepX + 1f
+            val y = h - ((clamped / maxScaleFps.toFloat()) * (h - padY * 2f)) - padY
             if (idx == 0) {
                 strokePath.moveTo(x, y)
                 fillPath.moveTo(x, h)
                 fillPath.lineTo(x, y)
             } else {
-                strokePath.lineTo(x, y)
-                fillPath.lineTo(x, y)
+                val midX = (prevX + x) * 0.5f
+                strokePath.cubicTo(midX, prevY, midX, y, x, y)
+                fillPath.cubicTo(midX, prevY, midX, y, x, y)
             }
-            lastX = x
-            lastY = y
+            prevX = x
+            prevY = y
             if (idx == points.lastIndex) {
                 fillPath.lineTo(x, h)
                 fillPath.close()
@@ -96,13 +111,15 @@ class HudSparklineView(context: Context) : View(context) {
             cachedShaderColor = accentColor
             fillPaint.shader = LinearGradient(
                 0f, 0f, 0f, h,
-                Color.argb(95, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor)),
+                Color.argb(105, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor)),
                 Color.TRANSPARENT,
                 Shader.TileMode.CLAMP
             )
         }
         canvas.drawPath(fillPath, fillPaint)
+        canvas.drawPath(strokePath, glowPaint)
         canvas.drawPath(strokePath, linePaint)
-        canvas.drawCircle(lastX, lastY, 3.2f, dotPaint)
+        canvas.drawCircle(prevX, prevY, 5.5f, dotHaloPaint)
+        canvas.drawCircle(prevX, prevY, 2.8f, dotPaint)
     }
 }

@@ -932,7 +932,8 @@ class SystemMonitor(private val context: Context) {
         }
         // If direct sysfs read was blocked by SELinux, try a single batched Shizuku shell read
         if (raw.isEmpty() && ensureShell()) {
-            val cmd = "for i in \$(seq 0 ${coreCount - 1}); do " +
+            val indices = (0 until coreCount).joinToString(" ")
+            val cmd = "for i in $indices; do " +
                 "c=\$(cat /sys/devices/system/cpu/cpu\$i/cpufreq/scaling_cur_freq 2>/dev/null); " +
                 "m=\$(cat /sys/devices/system/cpu/cpu\$i/cpufreq/cpuinfo_max_freq 2>/dev/null); " +
                 "[ -n \"\$c\" ] && echo \"\$i \$c \${m:-1}\"; done"

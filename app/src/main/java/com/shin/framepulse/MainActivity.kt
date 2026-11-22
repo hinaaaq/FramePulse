@@ -5,15 +5,17 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.content.res.Configuration
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -28,6 +30,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -58,13 +61,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -74,6 +77,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
 import java.util.Locale
@@ -96,6 +100,10 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        )
         super.onCreate(savedInstanceState)
         Prefs.init(this)
         try {
@@ -108,7 +116,8 @@ class MainActivity : ComponentActivity() {
                     primary = CyberCyan,
                     background = BgObsidian,
                     surface = CardSurface
-                )
+                ),
+                typography = FramePulseTypography
             ) {
                 FramePulseProApp(
                     onRequestNotif = {
@@ -154,6 +163,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
 
     var turboAutoBoost by remember { mutableStateOf(Prefs.turboAutoBoost) }
     var turboFixedPerf by remember { mutableStateOf(Prefs.turboFixedPerf) }
+    var thermalLimitC by remember { mutableFloatStateOf(Prefs.turboThermalLimitC) }
     var fixedPerfLive by remember { mutableStateOf(GameBooster.isFixedPerfActive) }
     var thermalCooldown by remember { mutableStateOf(GameBooster.isThermalCooldown) }
     var boostStatusText by remember { mutableStateOf(GameBooster.lastBoostSummary) }
@@ -163,6 +173,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
 
     var layoutMode by remember { mutableStateOf(Prefs.layoutMode) }
     var hudStyle by remember { mutableStateOf(Prefs.hudStyle) }
+    var fontStyle by remember { mutableStateOf(Prefs.fontStyle) }
     var themeMode by remember { mutableStateOf(Prefs.themeMode) }
     var bgAlpha by remember { mutableIntStateOf(Prefs.bgAlpha) }
     var textSizeSp by remember { mutableFloatStateOf(Prefs.textSizeSp) }
@@ -186,6 +197,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
         Prefs.THEME_EMERALD -> EmeraldNeon
         Prefs.THEME_CRIMSON -> CrimsonAccent
         Prefs.THEME_AMBER -> AmberVolt
+        Prefs.THEME_VIOLET -> VioletHyper
         else -> CyberCyan
     }
 
@@ -218,7 +230,11 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     shizukuConnected = localMonitor.isShizukuReady()
                     benchmarkHistory = TelemetryHub.loadHistory()
                     lastCrashLog = Prefs.lastCrashLog
-                    if (OverlayService.isRunning) { if (localMonitor.isRunning()) localMonitor.stop() } else localMonitor.start()
+                    if (OverlayService.isRunning) {
+                        if (localMonitor.isRunning()) localMonitor.stop()
+                    } else {
+                        localMonitor.start()
+                    }
                 }
                 Lifecycle.Event.ON_STOP -> {
                     isAppForeground = false
@@ -271,118 +287,133 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
     Scaffold(
         containerColor = BgObsidian,
         topBar = {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(TopBarSurface)
-                    .statusBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "FramePulse",
-                            color = TextPrimary,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(activeAccent.copy(alpha = 0.2f))
-                                .border(1.dp, activeAccent.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
-                                .padding(horizontal = 6.dp, vertical = 1.dp)
-                        ) {
-                            Text("PRO 2.6", color = activeAccent, fontSize = 9.5.sp, fontWeight = FontWeight.ExtraBold)
-                        }
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    val engineText = when {
-                        telemetry.isTrueGameFps && telemetry.activeSurfaceName.isNotBlank() -> "SF • ${telemetry.activeSurfaceName}"
-                        shizukuConnected -> "Shizuku Ready • ${telemetry.displayRefreshHz}Hz"
-                        else -> "Standard • ${telemetry.displayRefreshHz}Hz"
-                    }
-                    StatusDotPill(
-                        label = engineText,
-                        color = if (shizukuConnected) EmeraldNeon else TextSecondary
-                    )
-                }
-
-                Button(
-                    onClick = {
-                        if (!Settings.canDrawOverlays(context)) {
-                            Toast.makeText(context, "Aktifkan izin Overlay di tab Setup dulu", Toast.LENGTH_SHORT).show()
-                            selectedTab = 3
-                            return@Button
-                        }
-                        onRequestNotif()
-                        if (OverlayService.isRunning) {
-                            context.startService(Intent(context, OverlayService::class.java).apply {
-                                action = OverlayService.ACTION_STOP
-                            })
-                            serviceRunning = false
-                            localMonitor.start()
-                        } else {
-                            localMonitor.stop()
-                            ContextCompat.startForegroundService(
-                                context,
-                                Intent(context, OverlayService::class.java).apply {
-                                    action = OverlayService.ACTION_START
-                                }
-                            )
-                            serviceRunning = true
-                        }
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (serviceRunning) CrimsonAccent else EmeraldNeon
-                    ),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+            Column(modifier = Modifier.fillMaxWidth().background(TopBarSurface)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 11.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = if (serviceRunning) "STOP HUD" else "START HUD",
-                        color = Color.Black,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 12.sp
-                    )
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FramePulseLogoMark(accent = activeAccent)
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "FramePulse",
+                                    color = TextPrimary,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = (-0.3).sp
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(activeAccent.copy(alpha = 0.18f))
+                                        .border(1.dp, activeAccent.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
+                                        .padding(horizontal = 6.dp, vertical = 1.dp)
+                                ) {
+                                    Text("PRO 3.0", color = activeAccent, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold)
+                                }
+                            }
+                            Spacer(Modifier.height(3.dp))
+                            val engineText = when {
+                                telemetry.isTrueGameFps && telemetry.activeSurfaceName.isNotBlank() -> "SF • ${telemetry.activeSurfaceName}"
+                                shizukuConnected -> "Shizuku • ${telemetry.displayRefreshHz}Hz"
+                                else -> "Standard • ${telemetry.displayRefreshHz}Hz"
+                            }
+                            StatusDotPill(
+                                label = engineText,
+                                color = if (shizukuConnected) EmeraldNeon else TextSecondary
+                            )
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            if (!Settings.canDrawOverlays(context)) {
+                                Toast.makeText(context, "Aktifkan izin Overlay di tab Setup dulu", Toast.LENGTH_SHORT).show()
+                                selectedTab = 3
+                                return@Button
+                            }
+                            onRequestNotif()
+                            if (OverlayService.isRunning) {
+                                context.startService(Intent(context, OverlayService::class.java).apply {
+                                    action = OverlayService.ACTION_STOP
+                                })
+                                serviceRunning = false
+                                localMonitor.start()
+                            } else {
+                                localMonitor.stop()
+                                ContextCompat.startForegroundService(
+                                    context,
+                                    Intent(context, OverlayService::class.java).apply {
+                                        action = OverlayService.ACTION_START
+                                    }
+                                )
+                                serviceRunning = true
+                            }
+                        },
+                        shape = RoundedCornerShape(13.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (serviceRunning) CrimsonAccent else EmeraldNeon
+                        ),
+                        contentPadding = PaddingValues(horizontal = 15.dp, vertical = 9.dp)
+                    ) {
+                        Text(
+                            text = if (serviceRunning) "STOP HUD" else "START HUD",
+                            color = Color.Black,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 11.5.sp,
+                            letterSpacing = 0.4.sp
+                        )
+                    }
                 }
+                HorizontalDivider(color = CardBorder.copy(alpha = 0.65f))
             }
         },
         bottomBar = {
-            NavigationBar(
-                containerColor = TopBarSurface,
-                tonalElevation = 0.dp
-            ) {
-                val tabs = listOf("Monitor", "HUD Studio", "Sensors", "Setup")
-                tabs.forEachIndexed { idx, label ->
-                    val selected = selectedTab == idx
-                    NavigationBarItem(
-                        selected = selected,
-                        onClick = { selectedTab = idx },
-                        icon = {
-                            NavVectorIcon(
-                                index = idx,
-                                tint = if (selected) activeAccent else TextSecondary
+            Column(modifier = Modifier.fillMaxWidth().background(TopBarSurface)) {
+                HorizontalDivider(color = CardBorder.copy(alpha = 0.65f))
+                NavigationBar(
+                    containerColor = TopBarSurface,
+                    tonalElevation = 0.dp
+                ) {
+                    val tabs = listOf("Monitor", "HUD Studio", "Sensors", "Setup")
+                    tabs.forEachIndexed { idx, label ->
+                        val selected = selectedTab == idx
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = { selectedTab = idx },
+                            icon = {
+                                NavVectorIcon(
+                                    index = idx,
+                                    tint = if (selected) activeAccent else TextSecondary,
+                                    selected = selected
+                                )
+                            },
+                            label = {
+                                Text(
+                                    text = label,
+                                    fontSize = 10.5.sp,
+                                    fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium
+                                )
+                            },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = activeAccent,
+                                selectedTextColor = activeAccent,
+                                indicatorColor = activeAccent.copy(alpha = 0.14f),
+                                unselectedIconColor = TextSecondary,
+                                unselectedTextColor = TextSecondary
                             )
-                        },
-                        label = {
-                            Text(
-                                text = label,
-                                fontSize = 11.sp,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-                            )
-                        },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = activeAccent,
-                            selectedTextColor = activeAccent,
-                            indicatorColor = activeAccent.copy(alpha = 0.14f),
-                            unselectedIconColor = TextSecondary,
-                            unselectedTextColor = TextSecondary
                         )
-                    )
+                    }
                 }
             }
         }
@@ -398,11 +429,15 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
             when (selectedTab) {
                 0 -> {
                     item {
-                        CyberCard(borderColor = activeAccent.copy(alpha = 0.45f)) {
+                        CyberCard(
+                            borderColor = activeAccent.copy(alpha = 0.45f),
+                            accentGlow = activeAccent
+                        ) {
                             SectionTitle(
                                 title = "REAL-TIME FRAME PACING",
                                 badge = if (telemetry.isTrueGameFps) "SURFACEFLINGER" else "CHOREOGRAPHER",
-                                accent = activeAccent
+                                accent = activeAccent,
+                                iconType = "pulse"
                             )
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -417,30 +452,32 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                             telemetry.fps >= 30 -> AmberVolt
                                             else -> CrimsonAccent
                                         },
-                                        fontSize = 46.sp,
+                                        fontSize = 52.sp,
                                         fontWeight = FontWeight.Black,
-                                        fontFamily = FontFamily.Monospace
+                                        fontFamily = FontFamily.Monospace,
+                                        style = TextStyle(fontFeatureSettings = "tnum")
                                     )
                                     Text(
                                         text = " FPS",
                                         color = TextSecondary,
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(bottom = 9.dp)
+                                        modifier = Modifier.padding(bottom = 11.dp)
                                     )
                                 }
                                 Column(horizontalAlignment = Alignment.End) {
                                     Text(
                                         text = String.format(Locale.US, "%.1f ms", telemetry.frameTimeMs),
                                         color = TextPrimary,
-                                        fontSize = 19.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        fontFamily = FontFamily.Monospace
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontFamily = FontFamily.Monospace,
+                                        style = TextStyle(fontFeatureSettings = "tnum")
                                     )
                                     Text(
-                                        text = "Target ${telemetry.displayRefreshHz}Hz",
+                                        text = "Display ${telemetry.displayRefreshHz}Hz • Cap ${effectiveGraphMax}",
                                         color = TextSecondary,
-                                        fontSize = 11.sp
+                                        fontSize = 10.5.sp
                                     )
                                 }
                             }
@@ -465,24 +502,36 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             fixedPerfLive -> EmeraldNeon
                             else -> activeAccent
                         }
-                        CyberCard(borderColor = if (fixedPerfLive) EmeraldNeon.copy(alpha = 0.55f) else CardBorder) {
-                            SectionTitle("GAME TURBO ENGINE", turboBadge, turboBadgeColor)
+                        CyberCard(
+                            borderColor = if (fixedPerfLive) EmeraldNeon.copy(alpha = 0.55f) else CardBorder,
+                            accentGlow = if (fixedPerfLive) EmeraldNeon else null
+                        ) {
+                            SectionTitle("GAME TURBO ENGINE", turboBadge, turboBadgeColor, iconType = "bolt")
                             val targetShort = lastGamePkg.substringAfterLast('.').ifBlank { "Otomatis saat main" }
                             Text(
-                                text = "Target Game: $targetShort • Thermal Guard: ${Prefs.turboThermalLimitC.roundToInt()}°C",
+                                text = "Target: $targetShort • Thermal Guard: ${thermalLimitC.roundToInt()}°C",
                                 color = TextSecondary,
                                 fontSize = 11.sp,
                                 fontFamily = FontFamily.Monospace
                             )
                             if (boostStatusText.isNotBlank()) {
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    text = boostStatusText,
-                                    color = EmeraldNeon,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
-                                )
+                                Spacer(Modifier.height(5.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(EmeraldNeon.copy(alpha = 0.10f))
+                                        .border(1.dp, EmeraldNeon.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                        .padding(horizontal = 9.dp, vertical = 5.dp)
+                                ) {
+                                    Text(
+                                        text = boostStatusText,
+                                        color = EmeraldNeon,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
                             }
                             Spacer(Modifier.height(10.dp))
                             Row(
@@ -505,7 +554,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                         }
                                     },
                                     modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(10.dp),
+                                    shape = RoundedCornerShape(11.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = EmeraldNeon)
                                 ) {
                                     Text(
@@ -529,8 +578,8 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                         }
                                     },
                                     modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))
+                                    shape = RoundedCornerShape(11.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = CardSurfaceHigh)
                                 ) {
                                     Text(
                                         text = if (isCompilingArt) "OPTIMASI..." else "ART COMPILE",
@@ -555,14 +604,30 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     fixedPerfLive = GameBooster.isFixedPerfActive
                                     val msg = when {
                                         !enabled -> "Fixed Performance Mode dimatikan"
-                                        ok -> "Fixed Performance Mode AKTIF (Thermal Guard 43°C)"
+                                        ok -> "Fixed Performance Mode AKTIF (Guard ${thermalLimitC.roundToInt()}°C)"
                                         else -> "Perangkat/Shizuku tidak mendukung Fixed Perf HAL"
                                     }
                                     boostStatusText = msg
                                     Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                 }
                             }
-                            Spacer(Modifier.height(4.dp))
+                            Spacer(Modifier.height(6.dp))
+                            Text("Batas Auto-Thermal Guard", color = TextSecondary, fontSize = 10.5.sp)
+                            Spacer(Modifier.height(5.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(41f to "41°C Dingin", 43f to "43°C Ideal", 45f to "45°C Maks").forEach { (lim, lbl) ->
+                                    PillChip(
+                                        label = lbl,
+                                        selected = thermalLimitC.roundToInt() == lim.roundToInt(),
+                                        accent = AmberVolt,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        thermalLimitC = lim
+                                        Prefs.turboThermalLimitC = lim
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
                             Button(
                                 onClick = {
                                     layoutMode = Prefs.LAYOUT_MINI
@@ -574,11 +639,11 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     Prefs.updateIntervalMs = 1000L
                                     Prefs.showHudGraph = false
                                     pushOverlayUpdate()
-                                    Toast.makeText(context, "Mode Ultra-Ringan aktif (Mini + 1.0s + Tanpa Grafik)", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Preset Ultra-Ringan aktif (Mini + 1.0s + Tanpa Grafik)", Toast.LENGTH_SHORT).show()
                                 },
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0B1628))
+                                shape = RoundedCornerShape(11.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A1426))
                             ) {
                                 Text("Terapkan Preset HUD Ultra-Ringan (0 Lag)", color = activeAccent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                             }
@@ -595,7 +660,8 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             SectionTitle(
                                 title = "SESSION BENCHMARK RECORDER",
                                 badge = recBadge,
-                                accent = if (isRecording) CrimsonAccent else EmeraldNeon
+                                accent = if (isRecording) CrimsonAccent else EmeraldNeon,
+                                iconType = "record"
                             )
                             Button(
                                 onClick = {
@@ -610,16 +676,16 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     pushOverlayUpdate()
                                 },
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(10.dp),
+                                shape = RoundedCornerShape(11.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (isRecording) CrimsonAccent else Color(0xFF1E293B)
+                                    containerColor = if (isRecording) CrimsonAccent else CardSurfaceHigh
                                 )
                             ) {
                                 Text(
                                     text = if (isRecording) "STOP & SIMPAN HASIL BENCHMARK" else "MULAI REKAM SESI GAME (TRUE 1% LOW)",
                                     color = if (isRecording) Color.Black else TextPrimary,
                                     fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 12.sp
+                                    fontSize = 11.5.sp
                                 )
                             }
 
@@ -628,12 +694,12 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 Spacer(Modifier.height(12.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    MetricMiniCol("AVG FPS", String.format(Locale.US, "%.1f", latestRes.avgFps), EmeraldNeon)
-                                    MetricMiniCol("1% LOW", "${latestRes.onePercentLowFps}", AmberVolt)
-                                    MetricMiniCol("MIN/MAX", "${latestRes.minFps}/${latestRes.maxFps}", CyberCyan)
-                                    MetricMiniCol("PEAK °C", String.format(Locale.US, "%.1f°", latestRes.peakTempC), CrimsonAccent)
+                                    MetricStatBox("AVG FPS", String.format(Locale.US, "%.1f", latestRes.avgFps), EmeraldNeon, Modifier.weight(1f))
+                                    MetricStatBox("1% LOW", "${latestRes.onePercentLowFps}", AmberVolt, Modifier.weight(1f))
+                                    MetricStatBox("MIN/MAX", "${latestRes.minFps}/${latestRes.maxFps}", CyberCyan, Modifier.weight(1f))
+                                    MetricStatBox("PEAK °C", String.format(Locale.US, "%.1f°", latestRes.peakTempC), CrimsonAccent, Modifier.weight(1f))
                                 }
                             }
 
@@ -677,7 +743,8 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                             color = TextPrimary,
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
-                                            fontFamily = FontFamily.Monospace
+                                            fontFamily = FontFamily.Monospace,
+                                            style = TextStyle(fontFeatureSettings = "tnum")
                                         )
                                     }
                                 }
@@ -693,18 +760,24 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             CyberCard(modifier = Modifier.weight(1f)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("CPU & GPU", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        MiniVectorIcon("cpu", PurpleGpu, Modifier.size(13.dp))
+                                        Spacer(Modifier.width(5.dp))
+                                        Text("CPU & GPU", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    }
                                     Text(telemetry.cpuSource, color = activeAccent, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
                                 }
-                                Spacer(Modifier.height(4.dp))
+                                Spacer(Modifier.height(6.dp))
                                 Text(
                                     text = "CPU ${telemetry.cpuLoadPercent}%",
                                     color = TextPrimary,
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
+                                    fontSize = 19.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontFamily = FontFamily.Monospace,
+                                    style = TextStyle(fontFeatureSettings = "tnum")
                                 )
                                 Text(
                                     text = "GPU ${telemetry.gpuLoadPercent?.let { "$it%" } ?: "N/A"} • ${String.format(Locale.US, "%.2f", telemetry.cpuMaxGhz)}G",
@@ -712,32 +785,53 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     fontSize = 11.sp,
                                     fontFamily = FontFamily.Monospace
                                 )
+                                Spacer(Modifier.height(6.dp))
+                                LinearProgressIndicator(
+                                    progress = { (telemetry.cpuLoadPercent / 100f).coerceIn(0f, 1f) },
+                                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(4.dp)),
+                                    color = activeAccent,
+                                    trackColor = Color(0xFF1E293B)
+                                )
                             }
                             CyberCard(modifier = Modifier.weight(1f)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("THERMAL", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                    Text("BAT ${telemetry.batteryPercent}%", color = EmeraldNeon, fontSize = 9.5.sp, fontFamily = FontFamily.Monospace)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        MiniVectorIcon("temp", AmberVolt, Modifier.size(13.dp))
+                                        Spacer(Modifier.width(5.dp))
+                                        Text("THERMAL", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    Text("${telemetry.batteryPercent}%", color = EmeraldNeon, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                                 }
-                                Spacer(Modifier.height(4.dp))
+                                Spacer(Modifier.height(6.dp))
+                                val tempCol = when {
+                                    telemetry.batteryTempC >= 42f -> CrimsonAccent
+                                    telemetry.batteryTempC >= 38f -> AmberVolt
+                                    else -> CyberCyan
+                                }
                                 Text(
                                     text = String.format(Locale.US, "%.1f °C", telemetry.batteryTempC),
-                                    color = when {
-                                        telemetry.batteryTempC >= 42f -> CrimsonAccent
-                                        telemetry.batteryTempC >= 38f -> AmberVolt
-                                        else -> CyberCyan
-                                    },
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
+                                    color = tempCol,
+                                    fontSize = 19.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontFamily = FontFamily.Monospace,
+                                    style = TextStyle(fontFeatureSettings = "tnum")
                                 )
                                 Text(
                                     text = String.format(Locale.US, "%s%.1f W • %d mA", if (telemetry.isCharging) "+" else "-", telemetry.powerWatts, telemetry.currentMa),
-                                    color = AmberVolt,
+                                    color = if (telemetry.isCharging) EmeraldNeon else AmberVolt,
                                     fontSize = 11.sp,
                                     fontFamily = FontFamily.Monospace
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                LinearProgressIndicator(
+                                    progress = { ((telemetry.batteryTempC - 25f) / 25f).coerceIn(0f, 1f) },
+                                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(4.dp)),
+                                    color = tempCol,
+                                    trackColor = Color(0xFF1E293B)
                                 )
                             }
                         }
@@ -749,33 +843,43 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             CyberCard(modifier = Modifier.weight(1f)) {
-                                Text("MEMORY (RAM)", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                Spacer(Modifier.height(4.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    MiniVectorIcon("ram", PinkRam, Modifier.size(13.dp))
+                                    Spacer(Modifier.width(5.dp))
+                                    Text("MEMORY (RAM)", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Spacer(Modifier.height(6.dp))
                                 Text(
                                     text = String.format(Locale.US, "%.1f / %.1f GB", telemetry.ramUsedGb, telemetry.ramTotalGb),
                                     color = TextPrimary,
                                     fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontFamily = FontFamily.Monospace,
+                                    style = TextStyle(fontFeatureSettings = "tnum")
                                 )
                                 val ramRatio = if (telemetry.ramTotalGb > 0f) (telemetry.ramUsedGb / telemetry.ramTotalGb).coerceIn(0f, 1f) else 0f
                                 Spacer(Modifier.height(6.dp))
                                 LinearProgressIndicator(
                                     progress = { ramRatio },
-                                    modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(4.dp)),
+                                    modifier = Modifier.fillMaxWidth().height(4.5.dp).clip(RoundedCornerShape(4.dp)),
                                     color = PinkRam,
                                     trackColor = Color(0xFF1E293B)
                                 )
                             }
                             CyberCard(modifier = Modifier.weight(1f)) {
-                                Text("NETWORK I/O", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                Spacer(Modifier.height(4.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    MiniVectorIcon("net", EmeraldNeon, Modifier.size(13.dp))
+                                    Spacer(Modifier.width(5.dp))
+                                    Text("NETWORK I/O", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Spacer(Modifier.height(6.dp))
                                 Text(
                                     text = "↓ ${telemetry.netDownKbps.toInt()} KB/s",
                                     color = EmeraldNeon,
                                     fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontFamily = FontFamily.Monospace,
+                                    style = TextStyle(fontFeatureSettings = "tnum")
                                 )
                                 Text(
                                     text = "↑ ${telemetry.netUpKbps.toInt()} KB/s",
@@ -790,7 +894,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     if (telemetry.cores.isNotEmpty()) {
                         item {
                             CyberCard {
-                                SectionTitle("CPU FREQUENCY MATRIX", "${telemetry.cores.size} CORES", activeAccent)
+                                SectionTitle("CPU FREQUENCY MATRIX", "${telemetry.cores.size} CORES", activeAccent, iconType = "cpu")
                                 telemetry.cores.chunked(2).forEach { pair ->
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -813,7 +917,8 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                                         text = "${core.curMhz} MHz",
                                                         color = TextPrimary,
                                                         fontSize = 10.sp,
-                                                        fontFamily = FontFamily.Monospace
+                                                        fontFamily = FontFamily.Monospace,
+                                                        style = TextStyle(fontFeatureSettings = "tnum")
                                                     )
                                                 }
                                                 Spacer(Modifier.height(3.dp))
@@ -834,13 +939,14 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
 
                 1 -> {
                     item {
-                        CyberCard(borderColor = activeAccent.copy(alpha = 0.5f)) {
+                        CyberCard(borderColor = activeAccent.copy(alpha = 0.5f), accentGlow = activeAccent) {
                             SectionTitle("LIVE HUD PREVIEW (1:1)", "$hudStyle • $layoutMode", activeAccent)
                             HudLivePreviewBox(
                                 telemetry = telemetry,
                                 fpsHistory = fpsHistory,
                                 layoutMode = layoutMode,
                                 hudStyle = hudStyle,
+                                fontStyle = fontStyle,
                                 accent = activeAccent,
                                 bgAlpha = bgAlpha,
                                 textSizeSp = textSizeSp,
@@ -862,13 +968,14 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
 
                     item {
                         CyberCard {
-                            SectionTitle("GAYA, LAYOUT & TEMA WARNA")
-                            Text("Gaya Kotak HUD", color = TextSecondary, fontSize = 11.sp)
+                            SectionTitle("GAYA, FONT & TEMA WARNA")
+                            Text("Gaya Kotak Overlay", color = TextSecondary, fontSize = 11.sp)
                             Spacer(Modifier.height(6.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                                 listOf(
-                                    Prefs.STYLE_GLASS to "Glass Card",
-                                    Prefs.STYLE_PILL to "Esports Pill",
+                                    Prefs.STYLE_GLASS to "Glass",
+                                    Prefs.STYLE_PILL to "Pill",
+                                    Prefs.STYLE_DECK to "Pro Deck",
                                     Prefs.STYLE_MINIMAL to "Minimal"
                                 ).forEach { (key, label) ->
                                     PillChip(
@@ -883,7 +990,31 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     }
                                 }
                             }
-                            Spacer(Modifier.height(10.dp))
+
+                            Spacer(Modifier.height(11.dp))
+                            Text("Tipografi / Font HUD", color = TextSecondary, fontSize = 11.sp)
+                            Spacer(Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                listOf(
+                                    Prefs.FONT_SPORT to "Sport",
+                                    Prefs.FONT_MONO_BOLD to "Mono",
+                                    Prefs.FONT_CLEAN to "Clean",
+                                    Prefs.FONT_TECH to "Tech"
+                                ).forEach { (key, label) ->
+                                    PillChip(
+                                        label = label,
+                                        selected = fontStyle == key,
+                                        accent = activeAccent,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        fontStyle = key
+                                        Prefs.fontStyle = key
+                                        pushOverlayUpdate()
+                                    }
+                                }
+                            }
+
+                            Spacer(Modifier.height(11.dp))
                             Text("Susunan Data", color = TextSecondary, fontSize = 11.sp)
                             Spacer(Modifier.height(6.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -904,20 +1035,40 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     }
                                 }
                             }
-                            Spacer(Modifier.height(10.dp))
+
+                            Spacer(Modifier.height(11.dp))
                             Text("Aksen Warna", color = TextSecondary, fontSize = 11.sp)
                             Spacer(Modifier.height(6.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                                 listOf(
                                     Triple(Prefs.THEME_CYBER, "Cyber", CyberCyan),
-                                    Triple(Prefs.THEME_EMERALD, "Emerald", EmeraldNeon),
-                                    Triple(Prefs.THEME_CRIMSON, "Crimson", CrimsonAccent),
-                                    Triple(Prefs.THEME_AMBER, "Volt", AmberVolt)
+                                    Triple(Prefs.THEME_EMERALD, "Neon", EmeraldNeon),
+                                    Triple(Prefs.THEME_CRIMSON, "Fury", CrimsonAccent)
                                 ).forEach { (key, label, col) ->
                                     PillChip(
                                         label = label,
                                         selected = themeMode == key,
                                         accent = col,
+                                        swatchColor = col,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        themeMode = key
+                                        Prefs.themeMode = key
+                                        pushOverlayUpdate()
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(7.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                listOf(
+                                    Triple(Prefs.THEME_AMBER, "Volt Amber", AmberVolt),
+                                    Triple(Prefs.THEME_VIOLET, "Hyper Violet", VioletHyper)
+                                ).forEach { (key, label, col) ->
+                                    PillChip(
+                                        label = label,
+                                        selected = themeMode == key,
+                                        accent = col,
+                                        swatchColor = col,
                                         modifier = Modifier.weight(1f)
                                     ) {
                                         themeMode = key
@@ -933,7 +1084,13 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                         CyberCard {
                             SectionTitle("TRANSPARANSI, SKALA & KONTROL")
                             val pct = ((bgAlpha / 255f) * 100).roundToInt()
-                            Text("Opacity Background: $pct%", color = TextSecondary, fontSize = 12.sp)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Opacity Background", color = TextSecondary, fontSize = 12.sp)
+                                Text("$pct%", color = activeAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                            }
                             Slider(
                                 value = bgAlpha.toFloat(),
                                 onValueChange = {
@@ -945,7 +1102,13 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 colors = SliderDefaults.colors(thumbColor = activeAccent, activeTrackColor = activeAccent)
                             )
 
-                            Text("Ukuran Teks HUD: ${String.format(Locale.US, "%.1f", textSizeSp)} sp", color = TextSecondary, fontSize = 12.sp)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Ukuran Font HUD", color = TextSecondary, fontSize = 12.sp)
+                                Text(String.format(Locale.US, "%.1f sp", textSizeSp), color = activeAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                            }
                             Slider(
                                 value = textSizeSp,
                                 onValueChange = {
@@ -994,7 +1157,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             }
 
                             Spacer(Modifier.height(10.dp))
-                            ToggleRow("Grafik Mini di dalam HUD", showHudGraph, activeAccent) {
+                            ToggleRow("Grafik Bezier Mini di dalam HUD", showHudGraph, activeAccent) {
                                 showHudGraph = it
                                 Prefs.showHudGraph = it
                                 pushOverlayUpdate()
@@ -1029,25 +1192,25 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             val topSafeY = ((if (isLand) 14 else 38) * dm.density).toInt()
                             val sideMargin = (10 * dm.density).toInt()
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                PillChip("Kiri Atas", false, activeAccent, Modifier.weight(1f)) {
+                                PillChip("Kiri Atas", false, activeAccent, modifier = Modifier.weight(1f)) {
                                     applyPreset(sideMargin, topSafeY)
                                 }
-                                PillChip("Tengah Atas", false, activeAccent, Modifier.weight(1f)) {
+                                PillChip("Tengah Atas", false, activeAccent, modifier = Modifier.weight(1f)) {
                                     applyPreset((dm.widthPixels * 0.34f).toInt(), topSafeY)
                                 }
-                                PillChip("Kanan Atas", false, activeAccent, Modifier.weight(1f)) {
+                                PillChip("Kanan Atas", false, activeAccent, modifier = Modifier.weight(1f)) {
                                     applyPreset((dm.widthPixels * 0.68f).toInt(), topSafeY)
                                 }
                             }
                             Spacer(Modifier.height(8.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                PillChip("Kiri Bawah", false, activeAccent, Modifier.weight(1f)) {
-                                    applyPreset(20, (dm.heightPixels * 0.85f).toInt())
+                                PillChip("Kiri Bawah", false, activeAccent, modifier = Modifier.weight(1f)) {
+                                    applyPreset(sideMargin, (dm.heightPixels * 0.85f).toInt())
                                 }
-                                PillChip("Tengah Bawah", false, activeAccent, Modifier.weight(1f)) {
+                                PillChip("Tengah Bawah", false, activeAccent, modifier = Modifier.weight(1f)) {
                                     applyPreset((dm.widthPixels * 0.34f).toInt(), (dm.heightPixels * 0.85f).toInt())
                                 }
-                                PillChip("Kanan Bawah", false, activeAccent, Modifier.weight(1f)) {
+                                PillChip("Kanan Bawah", false, activeAccent, modifier = Modifier.weight(1f)) {
                                     applyPreset((dm.widthPixels * 0.68f).toInt(), (dm.heightPixels * 0.85f).toInt())
                                 }
                             }
@@ -1058,23 +1221,55 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                 2 -> {
                     item {
                         CyberCard {
-                            SectionTitle("SENSOR FRAME & PERFORMA")
-                            SensorToggleRow("FPS (Frame Per Second)", "${telemetry.fps} FPS", sFps, activeAccent) { sFps = it; Prefs.showFps = it; pushOverlayUpdate() }
-                            SensorToggleRow("Frame Time", String.format(Locale.US, "%.1f ms", telemetry.frameTimeMs), sFrameTime, activeAccent) { sFrameTime = it; Prefs.showFrameTime = it; pushOverlayUpdate() }
-                            SensorToggleRow("CPU Total Load", "${telemetry.cpuLoadPercent}% (${telemetry.cpuSource})", sCpu, activeAccent) { sCpu = it; Prefs.showCpu = it; pushOverlayUpdate() }
-                            SensorToggleRow("CPU Peak Clock", String.format(Locale.US, "%.2f GHz", telemetry.cpuMaxGhz), sClock, activeAccent) { sClock = it; Prefs.showClock = it; pushOverlayUpdate() }
-                            SensorToggleRow("GPU Load", telemetry.gpuLoadPercent?.let { "$it%" } ?: "N/A", sGpu, activeAccent) { sGpu = it; Prefs.showGpu = it; pushOverlayUpdate() }
+                            SectionTitle("PRESET CEPAT SENSOR", "1-TAP", activeAccent)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                PillChip("Esports", false, EmeraldNeon, modifier = Modifier.weight(1f)) {
+                                    sFps = true; sFrameTime = false; sCpu = false; sClock = false
+                                    sGpu = false; sRam = false; sTemp = true; sBatt = false; sWatt = false; sNet = false
+                                    Prefs.showFps = true; Prefs.showFrameTime = false; Prefs.showCpu = false; Prefs.showClock = false
+                                    Prefs.showGpu = false; Prefs.showRam = false; Prefs.showTemp = true; Prefs.showBatteryPct = false
+                                    Prefs.showWatt = false; Prefs.showNet = false
+                                    pushOverlayUpdate()
+                                }
+                                PillChip("Benchmark", false, activeAccent, modifier = Modifier.weight(1f)) {
+                                    sFps = true; sFrameTime = true; sCpu = true; sClock = false
+                                    sGpu = true; sRam = false; sTemp = true; sBatt = false; sWatt = true; sNet = false
+                                    Prefs.showFps = true; Prefs.showFrameTime = true; Prefs.showCpu = true; Prefs.showClock = false
+                                    Prefs.showGpu = true; Prefs.showRam = false; Prefs.showTemp = true; Prefs.showBatteryPct = false
+                                    Prefs.showWatt = true; Prefs.showNet = false
+                                    pushOverlayUpdate()
+                                }
+                                PillChip("Full Pro", false, VioletHyper, modifier = Modifier.weight(1f)) {
+                                    sFps = true; sFrameTime = true; sCpu = true; sClock = true
+                                    sGpu = true; sRam = true; sTemp = true; sBatt = true; sWatt = true; sNet = true
+                                    Prefs.showFps = true; Prefs.showFrameTime = true; Prefs.showCpu = true; Prefs.showClock = true
+                                    Prefs.showGpu = true; Prefs.showRam = true; Prefs.showTemp = true; Prefs.showBatteryPct = true
+                                    Prefs.showWatt = true; Prefs.showNet = true
+                                    pushOverlayUpdate()
+                                }
+                            }
                         }
                     }
 
                     item {
                         CyberCard {
-                            SectionTitle("MEMORI, BATERAI & JARINGAN")
-                            SensorToggleRow("RAM Terpakai", String.format(Locale.US, "%.1f GB", telemetry.ramUsedGb), sRam, activeAccent) { sRam = it; Prefs.showRam = it; pushOverlayUpdate() }
-                            SensorToggleRow("Suhu Baterai", String.format(Locale.US, "%.1f °C", telemetry.batteryTempC), sTemp, activeAccent) { sTemp = it; Prefs.showTemp = it; pushOverlayUpdate() }
-                            SensorToggleRow("Persentase Baterai", "${telemetry.batteryPercent}%", sBatt, activeAccent) { sBatt = it; Prefs.showBatteryPct = it; pushOverlayUpdate() }
-                            SensorToggleRow("Konsumsi Daya", String.format(Locale.US, "%.1f W", telemetry.powerWatts), sWatt, activeAccent) { sWatt = it; Prefs.showWatt = it; pushOverlayUpdate() }
-                            SensorToggleRow("Kecepatan Download", "↓ ${telemetry.netDownKbps.toInt()} KB/s", sNet, activeAccent) { sNet = it; Prefs.showNet = it; pushOverlayUpdate() }
+                            SectionTitle("SENSOR FRAME & PERFORMA", iconType = "pulse", accent = activeAccent)
+                            SensorToggleRow("FPS (Frame Per Second)", "${telemetry.fps} FPS", EmeraldNeon, sFps, activeAccent) { sFps = it; Prefs.showFps = it; pushOverlayUpdate() }
+                            SensorToggleRow("Frame Time", String.format(Locale.US, "%.1f ms", telemetry.frameTimeMs), CyberCyan, sFrameTime, activeAccent) { sFrameTime = it; Prefs.showFrameTime = it; pushOverlayUpdate() }
+                            SensorToggleRow("CPU Total Load", "${telemetry.cpuLoadPercent}% (${telemetry.cpuSource})", TextPrimary, sCpu, activeAccent) { sCpu = it; Prefs.showCpu = it; pushOverlayUpdate() }
+                            SensorToggleRow("CPU Peak Clock", String.format(Locale.US, "%.2f GHz", telemetry.cpuMaxGhz), Color(0xFFCBD5E1), sClock, activeAccent) { sClock = it; Prefs.showClock = it; pushOverlayUpdate() }
+                            SensorToggleRow("GPU Load", telemetry.gpuLoadPercent?.let { "$it%" } ?: "N/A", PurpleGpu, sGpu, activeAccent) { sGpu = it; Prefs.showGpu = it; pushOverlayUpdate() }
+                        }
+                    }
+
+                    item {
+                        CyberCard {
+                            SectionTitle("MEMORI, BATERAI & JARINGAN", iconType = "temp", accent = AmberVolt)
+                            SensorToggleRow("RAM Terpakai", String.format(Locale.US, "%.1f GB", telemetry.ramUsedGb), PinkRam, sRam, activeAccent) { sRam = it; Prefs.showRam = it; pushOverlayUpdate() }
+                            SensorToggleRow("Suhu Baterai", String.format(Locale.US, "%.1f °C", telemetry.batteryTempC), CyberCyan, sTemp, activeAccent) { sTemp = it; Prefs.showTemp = it; pushOverlayUpdate() }
+                            SensorToggleRow("Persentase Baterai", "${telemetry.batteryPercent}%", EmeraldNeon, sBatt, activeAccent) { sBatt = it; Prefs.showBatteryPct = it; pushOverlayUpdate() }
+                            SensorToggleRow("Konsumsi Daya", String.format(Locale.US, "%s%.1f W", if (telemetry.isCharging) "+" else "-", telemetry.powerWatts), AmberVolt, sWatt, activeAccent) { sWatt = it; Prefs.showWatt = it; pushOverlayUpdate() }
+                            SensorToggleRow("Kecepatan Download", "↓ ${telemetry.netDownKbps.toInt()} KB/s", EmeraldNeon, sNet, activeAccent) { sNet = it; Prefs.showNet = it; pushOverlayUpdate() }
                         }
                     }
                 }
@@ -1096,19 +1291,19 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     )
                                 },
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))
+                                shape = RoundedCornerShape(11.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = CardSurfaceHigh)
                             ) {
-                                Text(if (overlayGranted) "Izin Overlay Sudah Aktif ✓" else "Buka Pengaturan Izin Overlay", color = TextPrimary)
+                                Text(if (overlayGranted) "Izin Overlay Sudah Aktif ✓" else "Buka Pengaturan Izin Overlay", color = TextPrimary, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
 
                     item {
                         CyberCard {
-                            SectionTitle("2. SHIZUKU BRIDGE (TRUE FPS & GPU)", if (shizukuConnected) "TERHUBUNG" else "OPSIONAL", if (shizukuConnected) EmeraldNeon else CyberCyan)
+                            SectionTitle("2. SHIZUKU BRIDGE (TRUE FPS & TURBO)", if (shizukuConnected) "TERHUBUNG" else "OPSIONAL", if (shizukuConnected) EmeraldNeon else CyberCyan)
                             Text(
-                                text = "Menghubungkan ke SurfaceFlinger Android untuk membaca FPS asli game, True 1% Low, serta bypass blokir SELinux CPU/GPU tanpa root.",
+                                text = "Menghubungkan ke SurfaceFlinger Android untuk FPS asli game, True 1% Low, sensor CPU/GPU SELinux, serta Game Turbo Engine tanpa root.",
                                 color = TextSecondary,
                                 fontSize = 12.sp
                             )
@@ -1145,7 +1340,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(10.dp),
+                                shape = RoundedCornerShape(11.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0369A1))
                             ) {
                                 Text(if (shizukuConnected) "Shizuku Terhubung ✓" else "Hubungkan Izin Shizuku", color = TextPrimary, fontWeight = FontWeight.Bold)
@@ -1193,8 +1388,8 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))
+                                shape = RoundedCornerShape(11.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = CardSurfaceHigh)
                             ) {
                                 Text("Salin Info SurfaceFlinger (Debug FPS)", color = TextPrimary, fontSize = 12.sp)
                             }
@@ -1227,7 +1422,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                         },
                                         modifier = Modifier.weight(1f),
                                         shape = RoundedCornerShape(10.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))
+                                        colors = ButtonDefaults.buttonColors(containerColor = CardSurfaceHigh)
                                     ) {
                                         Text("Hapus Log", color = TextPrimary, fontSize = 12.sp)
                                     }
@@ -1242,10 +1437,25 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
 }
 
 @Composable
-fun MetricMiniCol(label: String, value: String, color: Color) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, color = color, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace)
-        Text(label, color = TextSecondary, fontSize = 10.sp)
+fun MetricStatBox(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFF080E1B))
+            .border(1.dp, color.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = value,
+            color = color,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.ExtraBold,
+            fontFamily = FontFamily.Monospace,
+            style = TextStyle(fontFeatureSettings = "tnum")
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(label, color = TextSecondary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -1269,18 +1479,40 @@ fun ToggleRow(label: String, checked: Boolean, accent: Color, onCheckedChange: (
 }
 
 @Composable
-fun SensorToggleRow(label: String, liveValue: String, checked: Boolean, accent: Color, onCheckedChange: (Boolean) -> Unit) {
+fun SensorToggleRow(
+    label: String,
+    liveValue: String,
+    valueColor: Color,
+    checked: Boolean,
+    accent: Color,
+    onCheckedChange: (Boolean) -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onCheckedChange(!checked) }
-            .padding(vertical = 4.dp),
+            .padding(vertical = 5.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(label, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-            Text(liveValue, color = TextSecondary, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            Text(label, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(2.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(valueColor.copy(alpha = 0.12f))
+                    .padding(horizontal = 6.dp, vertical = 1.dp)
+            ) {
+                Text(
+                    text = liveValue,
+                    color = valueColor,
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    style = TextStyle(fontFeatureSettings = "tnum")
+                )
+            }
         }
         Switch(
             checked = checked,

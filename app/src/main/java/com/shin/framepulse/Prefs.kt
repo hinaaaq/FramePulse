@@ -12,12 +12,19 @@ object Prefs {
 
     const val STYLE_GLASS = "GLASS"
     const val STYLE_PILL = "PILL"
+    const val STYLE_DECK = "DECK"
     const val STYLE_MINIMAL = "MINIMAL"
+
+    const val FONT_MONO_BOLD = "MONO_BOLD"
+    const val FONT_SPORT = "SPORT"
+    const val FONT_CLEAN = "CLEAN"
+    const val FONT_TECH = "TECH"
 
     const val THEME_CYBER = "CYBER"
     const val THEME_EMERALD = "EMERALD"
     const val THEME_CRIMSON = "CRIMSON"
     const val THEME_AMBER = "AMBER"
+    const val THEME_VIOLET = "VIOLET"
 
     @Volatile
     private var appCtx: Context? = null
@@ -40,6 +47,10 @@ object Prefs {
     var hudStyle: String
         get() = sp().getString("hud_style", STYLE_GLASS) ?: STYLE_GLASS
         set(v) = sp().edit().putString("hud_style", v).apply()
+
+    var fontStyle: String
+        get() = sp().getString("font_style", FONT_SPORT) ?: FONT_SPORT
+        set(v) = sp().edit().putString("font_style", v).apply()
 
     var themeMode: String
         get() = sp().getString("theme_mode", THEME_CYBER) ?: THEME_CYBER
@@ -94,11 +105,11 @@ object Prefs {
         set(v) = sp().edit().putBoolean("snap_to_edge", v).apply()
 
     var graphMaxFps: Int
-        get() = sp().getInt("graph_max_fps", 0) // 0 = Auto screen refresh rate
+        get() = sp().getInt("graph_max_fps", 0)
         set(v) = sp().edit().putInt("graph_max_fps", v).apply()
 
     var bgAlpha: Int
-        get() = sp().getInt("bg_alpha", 175)
+        get() = sp().getInt("bg_alpha", 190)
         set(v) = sp().edit().putInt("bg_alpha", v.coerceIn(0, 255)).apply()
 
     var textSizeSp: Float
@@ -114,15 +125,15 @@ object Prefs {
         set(v) = sp().edit().putInt("pos_x", v).apply()
 
     var posY: Int
-        get() = sp().getInt("pos_y", 48)
+        get() = sp().getInt("pos_y", 64)
         set(v) = sp().edit().putInt("pos_y", v).apply()
 
     var posXLand: Int
-        get() = sp().getInt("pos_x_land", posX)
+        get() = sp().getInt("pos_x_land", 24)
         set(v) = sp().edit().putInt("pos_x_land", v).apply()
 
     var posYLand: Int
-        get() = sp().getInt("pos_y_land", posY)
+        get() = sp().getInt("pos_y_land", 24)
         set(v) = sp().edit().putInt("pos_y_land", v).apply()
 
     fun getPosX(isLandscape: Boolean): Int = if (isLandscape) posXLand else posX

@@ -1,23 +1,59 @@
 <?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Outer precision HUD hexagon ring -->
     <path
-        android:strokeColor="#38BDF8"
-        android:strokeWidth="4.5"
-        android:strokeLineCap="round"
         android:fillColor="#00000000"
-        android:pathData="M30,66 A28,28 0 1,1 78,66" />
-    <path
-        android:strokeColor="#10B981"
-        android:strokeWidth="4.5"
+        android:strokeWidth="3.2"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
+        android:pathData="M54,23 L80,38 L80,70 L54,85 L28,70 L28,38 Z">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:type="linear"
+                android:startX="28"
+                android:startY="23"
+                android:endX="80"
+                android:endY="85"
+                android:startColor="#38BDF8"
+                android:endColor="#10B981" />
+        </aapt:attr>
+    </path>
+    <!-- Soft inner glow backdrop -->
+    <path
+        android:fillColor="#1A38BDF8"
+        android:pathData="M54,29 L74,41 L74,67 L54,79 L34,67 L34,41 Z" />
+    <!-- Precision FPS corner ticks -->
+    <path
+        android:strokeColor="#8038BDF8"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:pathData="M48,32 L60,32 M48,76 L60,76" />
+    <!-- Crisp FramePulse ECG wave -->
+    <path
         android:fillColor="#00000000"
-        android:pathData="M28,56 L42,56 L48,40 L55,68 L62,47 L67,56 L80,56" />
+        android:strokeWidth="4.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M31,56 L41,56 L47,39 L55,69 L62,46 L67,56 L77,56">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:type="linear"
+                android:startX="31"
+                android:startY="54"
+                android:endX="77"
+                android:endY="54"
+                android:startColor="#38BDF8"
+                android:centerColor="#2DD4BF"
+                android:endColor="#10B981" />
+        </aapt:attr>
+    </path>
+    <!-- Live telemetry pulse dot -->
     <path
         android:fillColor="#38BDF8"
-        android:pathData="M54,75m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" />
+        android:pathData="M77,56m-3.4,0a3.4,3.4 0,1 1,6.8 0a3.4,3.4 0,1 1,-6.8 0" />
 </vector>
