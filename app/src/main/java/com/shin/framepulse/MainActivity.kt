@@ -167,6 +167,11 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
             var showHomeLeaderboard by remember { mutableStateOf(false) }
             var showHomeThemes by remember { mutableStateOf(false) }
             var showHomeAbout by remember { mutableStateOf(false) }
+            val globalOwnerFlag = ProLicenseManager.isOwnerEmail(Prefs.linkedGoogleEmail)
+            val globalProFlag = ProLicenseManager.isProUnlocked() || globalOwnerFlag
+            var activeAppTheme by remember(globalProFlag, globalOwnerFlag) {
+                mutableStateOf(AppThemeManager.loadTheme(context, globalProFlag, globalOwnerFlag))
+            }
     var telemetry by remember { mutableStateOf(TelemetryHub.latest) }
     var fpsHistory by remember { mutableStateOf<List<Int>>(emptyList()) }
 
@@ -342,9 +347,9 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
     }
 
     Scaffold(
-        containerColor = BgObsidian,
+        containerColor = activeAppTheme.bgDark,
         topBar = {
-            Column(modifier = Modifier.fillMaxWidth().background(TopBarSurface)) {
+            Column(modifier = Modifier.fillMaxWidth().background(activeAppTheme.cardBg)) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -427,7 +432,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                         },
                         shape = RoundedCornerShape(13.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (serviceRunning) CrimsonAccent else EmeraldNeon
+                            containerColor = if (serviceRunning) CrimsonAccent else activeAppTheme.accent
                         ),
                         contentPadding = PaddingValues(horizontal = 15.dp, vertical = 9.dp)
                     ) {
@@ -444,10 +449,10 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
             }
         },
         bottomBar = {
-            Column(modifier = Modifier.fillMaxWidth().background(TopBarSurface)) {
+            Column(modifier = Modifier.fillMaxWidth().background(activeAppTheme.cardBg)) {
                 HorizontalDivider(color = CardBorder.copy(alpha = 0.65f))
                 NavigationBar(
-                    containerColor = TopBarSurface,
+                    containerColor = activeAppTheme.cardBg,
                     tonalElevation = 0.dp
                 ) {
                     val tabs = listOf(str.tabMonitor, str.tabStudio, str.tabSensors, str.tabSetup)
@@ -497,9 +502,6 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             val homeEmail = Prefs.linkedGoogleEmail
                             val ownerFlag = ProLicenseManager.isOwnerEmail(homeEmail)
                             val proFlag = ProLicenseManager.isProUnlocked() || ownerFlag
-                            var activeAppTheme by remember(proFlag, ownerFlag) {
-                                mutableStateOf(AppThemeManager.loadTheme(context, proFlag, ownerFlag))
-                            }
                             ProHomeCommandHub(
                                 theme = activeAppTheme,
                                 isPro = proFlag,
@@ -658,7 +660,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     },
                                     modifier = Modifier.weight(1f),
                                     shape = RoundedCornerShape(11.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldNeon)
+                                    colors = ButtonDefaults.buttonColors(containerColor = activeAppTheme.accent)
                                 ) {
                                     Text(
                                         text = if (isBoosting) str.boosting else str.boostNow,
@@ -2014,7 +2016,7 @@ fun ProSupporterDialog(
                     },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(11.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldNeon)
+                    colors = ButtonDefaults.buttonColors(containerColor = activeAppTheme.accent)
                 ) {
                     Text(
                         text = "${str.proPayTakoPrefix} • ${selectedPlan.priceIdr}",

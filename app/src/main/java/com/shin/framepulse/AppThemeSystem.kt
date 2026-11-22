@@ -25,10 +25,14 @@ import androidx.compose.ui.window.Dialog
 
 enum class AppThemeId {
     CYBER_EMERALD,
+    OBSIDIAN_MINIMAL,
+    STEAM_SLATE,
     CRIMSON_ESPORTS,
     MIDNIGHT_VIOLET,
     ARCTIC_CYAN,
-    SAKURA_PASTEL_DEV
+    SOLAR_GOLD,
+    SAKURA_PASTEL_DEV,
+    COTTON_CANDY_DEV
 }
 
 data class AppThemeSpec(
@@ -52,20 +56,42 @@ object AppThemeManager {
         AppThemeSpec(
             id = AppThemeId.CYBER_EMERALD,
             name = "Cyber Emerald",
-            subtitle = "Tema standar FramePulse • Gratis",
+            subtitle = "Standar FramePulse • Gratis",
             bgDark = Color(0xFF090D16),
-            cardBg = Color(0xFF131B2E),
+            cardBg = Color(0xFF111827),
             accent = Color(0xFF10B981),
             accentSecondary = Color(0xFF38BDF8),
             iconGlyph = "FP",
             isProOnly = false
         ),
         AppThemeSpec(
+            id = AppThemeId.OBSIDIAN_MINIMAL,
+            name = "Obsidian Pro",
+            subtitle = "Minimalis bersih ala Apple/iOS • Gratis",
+            bgDark = Color(0xFF0A0A0C),
+            cardBg = Color(0xFF16161A),
+            accent = Color(0xFFE5E7EB),
+            accentSecondary = Color(0xFF9CA3AF),
+            iconGlyph = "●",
+            isProOnly = false
+        ),
+        AppThemeSpec(
+            id = AppThemeId.STEAM_SLATE,
+            name = "Steam Slate",
+            subtitle = "Biru slate modern ala Steam Deck • Pro",
+            bgDark = Color(0xFF0E141B),
+            cardBg = Color(0xFF1B2838),
+            accent = Color(0xFF66C0F4),
+            accentSecondary = Color(0xFF1A9FFF),
+            iconGlyph = "◈",
+            isProOnly = true
+        ),
+        AppThemeSpec(
             id = AppThemeId.CRIMSON_ESPORTS,
             name = "Crimson Esports",
-            subtitle = "Merah-oranye agresif • Pro Pass",
-            bgDark = Color(0xFF14090C),
-            cardBg = Color(0xFF231116),
+            subtitle = "Merah-oranye kompetitif • Pro",
+            bgDark = Color(0xFF13090C),
+            cardBg = Color(0xFF211116),
             accent = Color(0xFFF43F5E),
             accentSecondary = Color(0xFFFB923C),
             iconGlyph = "⚡",
@@ -74,9 +100,9 @@ object AppThemeManager {
         AppThemeSpec(
             id = AppThemeId.MIDNIGHT_VIOLET,
             name = "Midnight Violet",
-            subtitle = "Ungu neon futuristik • Pro Pass",
-            bgDark = Color(0xFF0E0A1A),
-            cardBg = Color(0xFF1B1430),
+            subtitle = "Ungu neon futuristik • Pro",
+            bgDark = Color(0xFF0D0A19),
+            cardBg = Color(0xFF1A1430),
             accent = Color(0xFFA855F7),
             accentSecondary = Color(0xFF38BDF8),
             iconGlyph = "◆",
@@ -85,7 +111,7 @@ object AppThemeManager {
         AppThemeSpec(
             id = AppThemeId.ARCTIC_CYAN,
             name = "Arctic Cyan",
-            subtitle = "Biru es dingin & bersih • Pro Pass",
+            subtitle = "Biru es dingin & tajam • Pro",
             bgDark = Color(0xFF07131A),
             cardBg = Color(0xFF0E222E),
             accent = Color(0xFF06B6D4),
@@ -94,14 +120,37 @@ object AppThemeManager {
             isProOnly = true
         ),
         AppThemeSpec(
+            id = AppThemeId.SOLAR_GOLD,
+            name = "Solar Gold",
+            subtitle = "Emas mewah edisi premium • Pro",
+            bgDark = Color(0xFF120F07),
+            cardBg = Color(0xFF211B0D),
+            accent = Color(0xFFFACC15),
+            accentSecondary = Color(0xFFF59E0B),
+            iconGlyph = "★",
+            isProOnly = true
+        ),
+        AppThemeSpec(
             id = AppThemeId.SAKURA_PASTEL_DEV,
             name = "Sakura Pastel ♡",
-            subtitle = "Tema Rahasia Khusus Dev/Owner • Pastel Pink & Baby Blue",
-            bgDark = Color(0xFF1E121D),
-            cardBg = Color(0xFF2E1C2D),
+            subtitle = "Tema Rahasia Dev • Soft Pink & Baby Blue",
+            bgDark = Color(0xFF1B101A),
+            cardBg = Color(0xFF281727),
             accent = Color(0xFFFF85C0),
             accentSecondary = Color(0xFF85D7FF),
             iconGlyph = "♡",
+            isProOnly = false,
+            isOwnerOnly = true
+        ),
+        AppThemeSpec(
+            id = AppThemeId.COTTON_CANDY_DEV,
+            name = "Cotton Candy ♡",
+            subtitle = "Tema Rahasia Dev • Lavender & Bubblegum",
+            bgDark = Color(0xFF141124),
+            cardBg = Color(0xFF211C38),
+            accent = Color(0xFFFF9EE2),
+            accentSecondary = Color(0xFF7DD3FC),
+            iconGlyph = "✦",
             isProOnly = false,
             isOwnerOnly = true
         )
@@ -133,32 +182,31 @@ fun ThemePickerDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    // Tema rahasia Dev/Owner 100% disembunyikan dari daftar jika bukan akun Owner
     val visibleThemes = remember(isOwner) {
         AppThemeManager.allThemes.filter { !it.isOwnerOnly || isOwner }
     }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(18.dp),
+            shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = currentTheme.bgDark)
         ) {
             Column(
                 modifier = Modifier
-                    .border(1.dp, currentTheme.accent.copy(alpha = 0.45f), RoundedCornerShape(18.dp))
+                    .border(1.dp, currentTheme.accent.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
                     .padding(16.dp)
             ) {
-                Text("Tema & Ikon Aplikasi", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                Text("Tema Global Aplikasi", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
                 Text(
-                    if (isOwner) "Mode Owner aktif: semua tema Pro + tema rahasia terbuka."
-                    else "Ubah tampilan & ikon header FramePulse sesuai gaya kamu.",
+                    if (isOwner) "Mode Owner: seluruh tema Pro + 2 tema rahasia terbuka."
+                    else "Mengubah warna seluruh layar, bar navigasi & aksen grafik.",
                     color = Color(0xFF94A3B8),
                     fontSize = 11.sp
                 )
                 Spacer(Modifier.height(12.dp))
 
                 LazyColumn(
-                    modifier = Modifier.heightIn(max = 340.dp),
+                    modifier = Modifier.heightIn(max = 380.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(visibleThemes) { theme ->
@@ -181,19 +229,19 @@ fun ThemePickerDialog(
                                     }
                                     AppThemeManager.saveTheme(context, theme.id)
                                     onSelect(theme)
-                                    Toast.makeText(context, "Tema ${theme.name} aktif!", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Tema ${theme.name} diterapkan!", Toast.LENGTH_SHORT).show()
                                 }
                                 .padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(36.dp)
                                     .clip(CircleShape)
                                     .background(Brush.linearGradient(listOf(theme.accent, theme.accentSecondary))),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(theme.iconGlyph, color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                                Text(theme.iconGlyph, color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
                             }
                             Spacer(Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
@@ -203,7 +251,7 @@ fun ThemePickerDialog(
                                         Box(
                                             modifier = Modifier
                                                 .clip(RoundedCornerShape(4.dp))
-                                                .background(Brush.horizontalGradient(listOf(Color(0xFFFF85C0), Color(0xFF85D7FF))))
+                                                .background(Brush.horizontalGradient(listOf(theme.accent, theme.accentSecondary)))
                                                 .padding(horizontal = 5.dp, vertical = 1.dp)
                                         ) {
                                             Text("DEV SECRET", color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 8.5.sp)
@@ -248,105 +296,73 @@ fun ProHomeCommandHub(
     onOpenThemes: () -> Unit,
     onOpenAbout: () -> Unit
 ) {
+    // Desain bersih tanpa header dobel (ala Apple Control Center / Steam Deck)
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(
-                Brush.linearGradient(
-                    listOf(theme.cardBg, theme.bgDark)
-                )
-            )
-            .border(1.dp, theme.accent.copy(alpha = 0.55f), RoundedCornerShape(16.dp))
-            .padding(14.dp)
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(Brush.linearGradient(listOf(theme.accent, theme.accentSecondary))),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(theme.iconGlyph, color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
-                }
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("FramePulse Hub", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(5.dp))
-                                .background(
-                                    when {
-                                        isOwner -> Brush.horizontalGradient(listOf(theme.accent, theme.accentSecondary))
-                                        isPro -> Brush.horizontalGradient(listOf(Color(0xFF10B981), Color(0xFF34D399)))
-                                        else -> Brush.horizontalGradient(listOf(Color(0xFF334155), Color(0xFF475569)))
-                                    }
-                                )
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                when {
-                                    isOwner -> "OWNER"
-                                    isPro -> "PRO"
-                                    else -> "FREE"
-                                },
-                                color = if (isOwner || isPro) Color.Black else Color.White,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 9.sp
-                            )
-                        }
-                    }
-                    Text("Akses cepat Preset Game, Rank Global & Tema", color = Color(0xFF94A3B8), fontSize = 10.5.sp)
-                }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(theme.cardBg)
+                    .border(1.dp, theme.accent.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+                    .clickable { onOpenPresets() }
+                    .padding(12.dp)
+            ) {
+                Text("Preset Game", color = theme.accent, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+                Spacer(Modifier.height(2.dp))
+                Text("Optimasi 1-tap Valorant, MLBB, PUBG", color = Color(0xFF94A3B8), fontSize = 10.sp, lineHeight = 13.sp)
+            }
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(theme.cardBg)
+                    .border(1.dp, theme.accentSecondary.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+                    .clickable { onOpenLeaderboard() }
+                    .padding(12.dp)
+            ) {
+                Text("Leaderboard", color = theme.accentSecondary, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+                Spacer(Modifier.height(2.dp))
+                Text("Rank Global & Simpan Kartu Pamer", color = Color(0xFF94A3B8), fontSize = 10.sp, lineHeight = 13.sp)
             }
         }
 
-        Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Button(
-                onClick = onOpenPresets,
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(theme.cardBg)
+                    .border(0.8.dp, theme.accent.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                    .clickable { onOpenThemes() }
+                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("Preset Game", color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 11.5.sp)
+                Text("Tema: ${theme.name}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, maxLines = 1)
+                Text(theme.iconGlyph, color = theme.accent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
-            Button(
-                onClick = onOpenLeaderboard,
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = theme.accentSecondary)
+
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(theme.cardBg)
+                    .border(0.8.dp, Color(0xFF334155), RoundedCornerShape(10.dp))
+                    .clickable { onOpenAbout() }
+                    .padding(horizontal = 14.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Leaderboard", color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 11.5.sp)
-            }
-        }
-        Spacer(Modifier.height(7.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Button(
-                onClick = onOpenThemes,
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))
-            ) {
-                Text("Tema: ${theme.name.take(10)}", color = theme.accent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
-            }
-            Button(
-                onClick = onOpenAbout,
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))
-            ) {
-                Text("About & GitHub", color = Color(0xFFE2E8F0), fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                Text("About", color = Color(0xFFCBD5E1), fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
             }
         }
     }
