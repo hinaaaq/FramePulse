@@ -70,7 +70,6 @@ object GameProfileEngine {
 
     fun buildApplyCommands(preset: GamePreset): List<String> {
         val cmds = mutableListOf(
-            "cmd activity kill-all",
             "settings put global window_animation_scale 0",
             "settings put global transition_animation_scale 0",
             "settings put global animator_duration_scale 0"

@@ -2008,7 +2008,7 @@ fun ProSupporterDialog(
                     )
                 }
                 Spacer(Modifier.height(7.dp))
-                OutlinedButton(
+                Button(
                     onClick = { showPresetDialog = true },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(11.dp)
@@ -2024,15 +2024,12 @@ fun ProSupporterDialog(
                     val amt = selectedPlan.priceIdr.filter { it.isDigit() }.toIntOrNull() ?: 10000
                     QrisPaymentDialog(
                         email = linkedEmail,
-                        planLabel = selectedPlan.name,
+                        planLabel = selectedPlan.priceIdr,
                         amountIdr = amt,
                         onCheckPaid = {
                             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                runCatching {
-                                    val enc = java.net.URLEncoder.encode(linkedEmail, "UTF-8")
-                                    val u = java.net.URL("${ProLicenseManager.CLOUD_API_BASE.trimEnd('/')}/api/check?email=$enc&device=qris")
-                                    u.readText().contains("\"active\":true")
-                                }.getOrDefault(false)
+                                ProLicenseManager.syncWithCloud(context, linkedEmail)
+                                ProLicenseManager.isProUnlocked()
                             }
                         },
                         onDismiss = { showQrisDialog = false }
@@ -2040,7 +2037,7 @@ fun ProSupporterDialog(
                 }
                 if (showPresetDialog) {
                     GamePresetDialog(
-                        isPro = ProLicenseManager.isProActive(context),
+                        isPro = ProLicenseManager.isProUnlocked(),
                         onDismiss = { showPresetDialog = false }
                     )
                 }
