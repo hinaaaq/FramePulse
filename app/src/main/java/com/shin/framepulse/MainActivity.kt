@@ -2016,7 +2016,7 @@ fun ProSupporterDialog(
                     },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(11.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = activeAppTheme.accent)
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldNeon)
                 ) {
                     Text(
                         text = "${str.proPayTakoPrefix} • ${selectedPlan.priceIdr}",
