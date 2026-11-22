@@ -1986,6 +1986,8 @@ fun ProSupporterDialog(
                 }
                 var showQrisDialog by remember { mutableStateOf(false) }
                 var showPresetDialog by remember { mutableStateOf(false) }
+                var showLeaderboardDialog by remember { mutableStateOf(false) }
+                var showAboutDialog by remember { mutableStateOf(false) }
                 Spacer(Modifier.height(7.dp))
                 Button(
                     onClick = {
@@ -2033,6 +2035,40 @@ fun ProSupporterDialog(
                             }
                         },
                         onDismiss = { showQrisDialog = false }
+                    )
+                }
+                Spacer(Modifier.height(7.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(
+                        onClick = { showLeaderboardDialog = true },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(11.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))
+                    ) {
+                        Text("Leaderboard & Pamer", color = Color(0xFFFACC15), fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+                    Button(
+                        onClick = { showAboutDialog = true },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(11.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))
+                    ) {
+                        Text("About & GitHub", color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+                }
+                if (showLeaderboardDialog) {
+                    val ownerNow = ProLicenseManager.isOwnerEmail(linkedEmail)
+                    LeaderboardDialog(
+                        email = linkedEmail,
+                        isPro = ProLicenseManager.isProUnlocked() || ownerNow,
+                        isOwner = ownerNow,
+                        onDismiss = { showLeaderboardDialog = false }
+                    )
+                }
+                if (showAboutDialog) {
+                    AboutAppDialog(
+                        isOwner = ProLicenseManager.isOwnerEmail(linkedEmail),
+                        onDismiss = { showAboutDialog = false }
                     )
                 }
                 if (showPresetDialog) {

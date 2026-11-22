@@ -133,6 +133,32 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
+    // --- GLOBAL LEADERBOARD (TOP 50 + SERVER-VERIFIED OWNER BADGE) ---
+    if (path === "/api/leaderboard/top" && request.method === "GET") {
+      const list = (await env.LICENSES.get("leaderboard:global", "json")) || [];
+      return jsonResp({ ok: true, entries: list.slice(0, 30) });
+    }
+
+    if (path === "/api/leaderboard/submit" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const rawName = String(body.nickname || "Player").replace(/[^a-zA-Z0-9 _.-]/g, "").trim().slice(0, 18) || "Player";
+      const rawDevice = String(body.device || "Android").replace(/[^a-zA-Z0-9 _.-]/g, "").trim().slice(0, 24) || "Android";
+      const rawGame = String(body.game || "Valorant Mobile").replace(/[^a-zA-Z0-9 _.-]/g, "").trim().slice(0, 24) || "Valorant Mobile";
+      const email = String(body.email || "").trim().toLowerCase();
+      const isOwner = await isOwnerEmail(email);
+      const fps = Math.max(10, Math.min(144, parseInt(body.avgFps || "60", 10) || 60));
+      const temp = Math.max(20, Math.min(65, parseInt(body.tempC || "38", 10) || 38));
+      const isPro = isOwner || Boolean(body.isPro);
+      const score = Math.round((fps * 10) - Math.max(0, temp - 35) * 8 + (isPro ? 25 : 0) + (isOwner ? 50 : 0));
+      let list = (await env.LICENSES.get("leaderboard:global", "json")) || [];
+      list = list.filter(item => !(item.nickname === rawName && item.game === rawGame));
+      list.push({ nickname: rawName, device: rawDevice, game: rawGame, avgFps: fps, tempC: temp, score, isPro, isOwner, updatedAt: Date.now() });
+      list.sort((a, b) => b.score - a.score);
+      list = list.slice(0, 50);
+      await env.LICENSES.put("leaderboard:global", JSON.stringify(list));
+      const rank = list.findIndex(item => item.nickname === rawName && item.game === rawGame) + 1;
+      return jsonResp({ ok: true, rank, score, isOwner, entries: list.slice(0, 30) });
+    }
     // --- MIDTRANS QRIS DYNAMIC CREATE ---
     if (path === "/api/qris/create" && request.method === "POST") {
       if (!env.MIDTRANS_SERVER_KEY) return jsonResp({ error: "midtrans_not_configured" }, 500);
