@@ -163,6 +163,10 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
 
     var isAppForeground by remember { mutableStateOf(true) }
     var selectedTab by remember { mutableIntStateOf(0) }
+            var showHomePresets by remember { mutableStateOf(false) }
+            var showHomeLeaderboard by remember { mutableStateOf(false) }
+            var showHomeThemes by remember { mutableStateOf(false) }
+            var showHomeAbout by remember { mutableStateOf(false) }
     var telemetry by remember { mutableStateOf(TelemetryHub.latest) }
     var fpsHistory by remember { mutableStateOf<List<Int>>(emptyList()) }
 
@@ -488,7 +492,41 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
             contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)
         ) {
             when (selectedTab) {
-                0 -> {
+                    0 -> {
+                        item {
+                            val ownerFlag = ProLicenseManager.isOwnerEmail(linkedEmail)
+                            val proFlag = ProLicenseManager.isProUnlocked() || ownerFlag
+                            var activeAppTheme by remember(proFlag, ownerFlag) {
+                                mutableStateOf(AppThemeManager.loadTheme(context, proFlag, ownerFlag))
+                            }
+                            ProHomeCommandHub(
+                                theme = activeAppTheme,
+                                isPro = proFlag,
+                                isOwner = ownerFlag,
+                                onOpenPresets = { showHomePresets = true },
+                                onOpenLeaderboard = { showHomeLeaderboard = true },
+                                onOpenThemes = { showHomeThemes = true },
+                                onOpenAbout = { showHomeAbout = true }
+                            )
+                            if (showHomePresets) {
+                                GamePresetDialog(isPro = proFlag, onDismiss = { showHomePresets = false })
+                            }
+                            if (showHomeLeaderboard) {
+                                LeaderboardDialog(email = linkedEmail, isPro = proFlag, isOwner = ownerFlag, onDismiss = { showHomeLeaderboard = false })
+                            }
+                            if (showHomeThemes) {
+                                ThemePickerDialog(
+                                    currentTheme = activeAppTheme,
+                                    isPro = proFlag,
+                                    isOwner = ownerFlag,
+                                    onSelect = { activeAppTheme = it },
+                                    onDismiss = { showHomeThemes = false }
+                                )
+                            }
+                            if (showHomeAbout) {
+                                AboutAppDialog(isOwner = ownerFlag, onDismiss = { showHomeAbout = false })
+                            }
+                        }
                     item {
                         CyberCard(
                             borderColor = activeAccent.copy(alpha = 0.45f),
