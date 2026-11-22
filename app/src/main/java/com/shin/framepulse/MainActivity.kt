@@ -1,6 +1,8 @@
 package com.shin.framepulse
 
 import android.Manifest
+import android.accounts.AccountManager
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -14,6 +16,7 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -34,7 +37,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -43,9 +48,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -72,6 +80,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -92,9 +101,9 @@ class MainActivity : ComponentActivity() {
     private val shizukuListener = Shizuku.OnRequestPermissionResultListener { _, grantResult ->
         runOnUiThread {
             if (grantResult == PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "Shizuku aktif: True Game FPS & SELinux Sensors siap!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Shizuku: True Game FPS & SELinux Sensors ready!", Toast.LENGTH_SHORT).show()
             } else {
-                Toast.makeText(this, "Izin Shizuku ditolak", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Shizuku permission denied", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -145,6 +154,13 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    var langPref by remember { mutableStateOf(Prefs.appLanguage) }
+    val str = remember(langPref) { AppStrings.forLang(langPref) }
+
+    var proStatus by remember { mutableStateOf(ProLicenseManager.getStatus(forceRefresh = true)) }
+    val isPro = proStatus.isPro
+    var showProDialog by remember { mutableStateOf(false) }
+
     var isAppForeground by remember { mutableStateOf(true) }
     var selectedTab by remember { mutableIntStateOf(0) }
     var telemetry by remember { mutableStateOf(TelemetryHub.latest) }
@@ -193,11 +209,11 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
     var sWatt by remember { mutableStateOf(Prefs.showWatt) }
     var sNet by remember { mutableStateOf(Prefs.showNet) }
 
-    val activeAccent = when (themeMode) {
-        Prefs.THEME_EMERALD -> EmeraldNeon
-        Prefs.THEME_CRIMSON -> CrimsonAccent
-        Prefs.THEME_AMBER -> AmberVolt
-        Prefs.THEME_VIOLET -> VioletHyper
+    val activeAccent = when {
+        themeMode == Prefs.THEME_EMERALD -> EmeraldNeon
+        isPro && themeMode == Prefs.THEME_CRIMSON -> CrimsonAccent
+        isPro && themeMode == Prefs.THEME_AMBER -> AmberVolt
+        isPro && themeMode == Prefs.THEME_VIOLET -> VioletHyper
         else -> CyberCyan
     }
 
@@ -206,6 +222,14 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
             context.startService(Intent(context, OverlayService::class.java).apply {
                 action = OverlayService.ACTION_UPDATE_CONFIG
             })
+        }
+    }
+
+    fun requirePro(action: () -> Unit) {
+        if (isPro) {
+            action()
+        } else {
+            showProDialog = true
         }
     }
 
@@ -230,6 +254,22 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     shizukuConnected = localMonitor.isShizukuReady()
                     benchmarkHistory = TelemetryHub.loadHistory()
                     lastCrashLog = Prefs.lastCrashLog
+                    proStatus = ProLicenseManager.getStatus(forceRefresh = true)
+                    if (Prefs.linkedGoogleEmail.isNotBlank() &&
+                        ProLicenseManager.isCloudConfigured() &&
+                        proStatus.state != LicenseState.PRO_ACTIVE
+                    ) {
+                        uiScope.launch {
+                            val syncRes = withContext(Dispatchers.IO) {
+                                ProLicenseManager.syncWithCloud(context)
+                            }
+                            if (syncRes is ProLicenseManager.CloudSyncResult.Activated) {
+                                proStatus = ProLicenseManager.getStatus(forceRefresh = true)
+                                pushOverlayUpdate()
+                                Toast.makeText(context, "${str.proKeySuccess} (${syncRes.expiryLabel})", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
                     if (OverlayService.isRunning) {
                         if (localMonitor.isRunning()) localMonitor.stop()
                     } else {
@@ -284,6 +324,19 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
 
     val effectiveGraphMax = if (graphMaxFps > 0) graphMaxFps else telemetry.displayRefreshHz
 
+    if (showProDialog) {
+        ProSupporterDialog(
+            str = str,
+            proStatus = proStatus,
+            accent = activeAccent,
+            onDismiss = { showProDialog = false },
+            onStatusChanged = { newStatus ->
+                proStatus = newStatus
+                pushOverlayUpdate()
+            }
+        )
+    }
+
     Scaffold(
         containerColor = BgObsidian,
         topBar = {
@@ -312,14 +365,22 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     letterSpacing = (-0.3).sp
                                 )
                                 Spacer(Modifier.width(6.dp))
+                                val badgeCol = if (isPro) activeAccent else AmberVolt
+                                val badgeTxt = when {
+                                    proStatus.tierLabel == "OWNER" -> "OWNER"
+                                    proStatus.state == LicenseState.PRO_ACTIVE -> "PRO 3.2"
+                                    proStatus.state == LicenseState.TRIAL_ACTIVE -> "TRIAL"
+                                    else -> "FREE • PRO"
+                                }
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(6.dp))
-                                        .background(activeAccent.copy(alpha = 0.18f))
-                                        .border(1.dp, activeAccent.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
-                                        .padding(horizontal = 6.dp, vertical = 1.dp)
+                                        .background(badgeCol.copy(alpha = 0.18f))
+                                        .border(1.dp, badgeCol.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                                        .clickable { showProDialog = true }
+                                        .padding(horizontal = 6.dp, vertical = 1.5.dp)
                                 ) {
-                                    Text("PRO 3.0", color = activeAccent, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold)
+                                    Text(badgeTxt, color = badgeCol, fontSize = 8.8.sp, fontWeight = FontWeight.ExtraBold)
                                 }
                             }
                             Spacer(Modifier.height(3.dp))
@@ -338,7 +399,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     Button(
                         onClick = {
                             if (!Settings.canDrawOverlays(context)) {
-                                Toast.makeText(context, "Aktifkan izin Overlay di tab Setup dulu", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, str.needOverlayPerm, Toast.LENGTH_SHORT).show()
                                 selectedTab = 3
                                 return@Button
                             }
@@ -367,7 +428,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                         contentPadding = PaddingValues(horizontal = 15.dp, vertical = 9.dp)
                     ) {
                         Text(
-                            text = if (serviceRunning) "STOP HUD" else "START HUD",
+                            text = if (serviceRunning) str.stopHud else str.startHud,
                             color = Color.Black,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 11.5.sp,
@@ -385,7 +446,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     containerColor = TopBarSurface,
                     tonalElevation = 0.dp
                 ) {
-                    val tabs = listOf("Monitor", "HUD Studio", "Sensors", "Setup")
+                    val tabs = listOf(str.tabMonitor, str.tabStudio, str.tabSensors, str.tabSetup)
                     tabs.forEachIndexed { idx, label ->
                         val selected = selectedTab == idx
                         NavigationBarItem(
@@ -434,7 +495,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             accentGlow = activeAccent
                         ) {
                             SectionTitle(
-                                title = "REAL-TIME FRAME PACING",
+                                title = str.realTimeFramePacing,
                                 badge = if (telemetry.isTrueGameFps) "SURFACEFLINGER" else "CHOREOGRAPHER",
                                 accent = activeAccent,
                                 iconType = "pulse"
@@ -475,7 +536,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                         style = TextStyle(fontFeatureSettings = "tnum")
                                     )
                                     Text(
-                                        text = "Display ${telemetry.displayRefreshHz}Hz • Cap ${effectiveGraphMax}",
+                                        text = "${str.displayLabel} ${telemetry.displayRefreshHz}Hz • Cap $effectiveGraphMax",
                                         color = TextSecondary,
                                         fontSize = 10.5.sp
                                     )
@@ -494,7 +555,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                         val turboBadge = when {
                             thermalCooldown -> "COOLDOWN"
                             fixedPerfLive -> "PERF HAL ON"
-                            turboAutoBoost -> "AUTO READY"
+                            turboAutoBoost && isPro -> "AUTO READY"
                             else -> "SHIZUKU"
                         }
                         val turboBadgeColor = when {
@@ -506,10 +567,10 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             borderColor = if (fixedPerfLive) EmeraldNeon.copy(alpha = 0.55f) else CardBorder,
                             accentGlow = if (fixedPerfLive) EmeraldNeon else null
                         ) {
-                            SectionTitle("GAME TURBO ENGINE", turboBadge, turboBadgeColor, iconType = "bolt")
-                            val targetShort = lastGamePkg.substringAfterLast('.').ifBlank { "Otomatis saat main" }
+                            SectionTitle(str.gameTurboEngine, turboBadge, turboBadgeColor, iconType = "bolt")
+                            val targetShort = lastGamePkg.substringAfterLast('.').ifBlank { str.autoWhilePlaying }
                             Text(
-                                text = "Target: $targetShort • Thermal Guard: ${thermalLimitC.roundToInt()}°C",
+                                text = "${str.targetGame}: $targetShort • ${str.thermalGuard}: ${thermalLimitC.roundToInt()}°C",
                                 color = TextSecondary,
                                 fontSize = 11.sp,
                                 fontFamily = FontFamily.Monospace
@@ -544,7 +605,10 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                         isBoosting = true
                                         uiScope.launch {
                                             val res = withContext(Dispatchers.IO) {
-                                                GameBooster.runQuickBoost(context)
+                                                GameBooster.runQuickBoost(
+                                                    context = context,
+                                                    enableFixedPerf = isPro && Prefs.turboFixedPerf
+                                                )
                                             }
                                             boostStatusText = res.summaryMessage
                                             fixedPerfLive = GameBooster.isFixedPerfActive
@@ -558,7 +622,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     colors = ButtonDefaults.buttonColors(containerColor = EmeraldNeon)
                                 ) {
                                     Text(
-                                        text = if (isBoosting) "BOOSTING..." else "BOOST SEKARANG",
+                                        text = if (isBoosting) str.boosting else str.boostNow,
                                         color = Color.Black,
                                         fontWeight = FontWeight.ExtraBold,
                                         fontSize = 11.5.sp
@@ -567,14 +631,16 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 Button(
                                     enabled = !isCompilingArt,
                                     onClick = {
-                                        isCompilingArt = true
-                                        uiScope.launch {
-                                            val msg = withContext(Dispatchers.IO) {
-                                                GameBooster.optimizeGameArtProfile(GameBooster.resolveTargetGamePackage())
+                                        requirePro {
+                                            isCompilingArt = true
+                                            uiScope.launch {
+                                                val msg = withContext(Dispatchers.IO) {
+                                                    GameBooster.optimizeGameArtProfile(GameBooster.resolveTargetGamePackage())
+                                                }
+                                                boostStatusText = msg
+                                                isCompilingArt = false
+                                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                                             }
-                                            boostStatusText = msg
-                                            isCompilingArt = false
-                                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                                         }
                                     },
                                     modifier = Modifier.weight(1f),
@@ -582,48 +648,61 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     colors = ButtonDefaults.buttonColors(containerColor = CardSurfaceHigh)
                                 ) {
                                     Text(
-                                        text = if (isCompilingArt) "OPTIMASI..." else "ART COMPILE",
+                                        text = if (isCompilingArt) str.optimizing else str.artCompile,
                                         color = TextPrimary,
                                         fontWeight = FontWeight.Bold,
-                                        fontSize = 11.5.sp
+                                        fontSize = 11.sp
                                     )
+                                    if (!isPro) {
+                                        Spacer(Modifier.width(4.dp))
+                                        ProTagPill()
+                                    }
                                 }
                             }
                             Spacer(Modifier.height(8.dp))
-                            ToggleRow("Auto-Boost saat START HUD & buka game", turboAutoBoost, activeAccent) {
-                                turboAutoBoost = it
-                                Prefs.turboAutoBoost = it
+                            ToggleRow(str.autoBoostLabel, isPro && turboAutoBoost, activeAccent, proLocked = !isPro) {
+                                requirePro {
+                                    turboAutoBoost = it
+                                    Prefs.turboAutoBoost = it
+                                }
                             }
-                            ToggleRow("Fixed Performance Mode (anti-drop 1% Low)", turboFixedPerf, EmeraldNeon) { enabled ->
-                                turboFixedPerf = enabled
-                                Prefs.turboFixedPerf = enabled
-                                uiScope.launch {
-                                    val ok = withContext(Dispatchers.IO) {
-                                        GameBooster.setFixedPerformanceMode(enabled)
+                            ToggleRow(str.fixedPerfLabel, isPro && turboFixedPerf, EmeraldNeon, proLocked = !isPro) { enabled ->
+                                requirePro {
+                                    turboFixedPerf = enabled
+                                    Prefs.turboFixedPerf = enabled
+                                    uiScope.launch {
+                                        val ok = withContext(Dispatchers.IO) {
+                                            GameBooster.setFixedPerformanceMode(enabled)
+                                        }
+                                        fixedPerfLive = GameBooster.isFixedPerfActive
+                                        val msg = when {
+                                            !enabled -> "Fixed Performance Mode OFF"
+                                            ok -> "Fixed Performance Mode ON (Guard ${thermalLimitC.roundToInt()}°C)"
+                                            else -> "Fixed Perf HAL unsupported on this device"
+                                        }
+                                        boostStatusText = msg
+                                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                     }
-                                    fixedPerfLive = GameBooster.isFixedPerfActive
-                                    val msg = when {
-                                        !enabled -> "Fixed Performance Mode dimatikan"
-                                        ok -> "Fixed Performance Mode AKTIF (Guard ${thermalLimitC.roundToInt()}°C)"
-                                        else -> "Perangkat/Shizuku tidak mendukung Fixed Perf HAL"
-                                    }
-                                    boostStatusText = msg
-                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                 }
                             }
                             Spacer(Modifier.height(6.dp))
-                            Text("Batas Auto-Thermal Guard", color = TextSecondary, fontSize = 10.5.sp)
+                            Text(str.thermalLimitTitle, color = TextSecondary, fontSize = 10.5.sp)
                             Spacer(Modifier.height(5.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                listOf(41f to "41°C Dingin", 43f to "43°C Ideal", 45f to "45°C Maks").forEach { (lim, lbl) ->
+                                listOf(41f to str.coolPreset, 43f to str.idealPreset, 45f to str.maxPreset).forEach { (lim, lbl) ->
                                     PillChip(
                                         label = lbl,
                                         selected = thermalLimitC.roundToInt() == lim.roundToInt(),
                                         accent = AmberVolt,
+                                        locked = !isPro && lim != 43f,
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        thermalLimitC = lim
-                                        Prefs.turboThermalLimitC = lim
+                                        if (lim == 43f || isPro) {
+                                            thermalLimitC = lim
+                                            Prefs.turboThermalLimitC = lim
+                                        } else {
+                                            showProDialog = true
+                                        }
                                     }
                                 }
                             }
@@ -639,41 +718,47 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     Prefs.updateIntervalMs = 1000L
                                     Prefs.showHudGraph = false
                                     pushOverlayUpdate()
-                                    Toast.makeText(context, "Preset Ultra-Ringan aktif (Mini + 1.0s + Tanpa Grafik)", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, str.ultraLightToast, Toast.LENGTH_SHORT).show()
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(11.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A1426))
                             ) {
-                                Text("Terapkan Preset HUD Ultra-Ringan (0 Lag)", color = activeAccent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                Text(str.ultraLightPreset, color = activeAccent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
 
                     item {
                         CyberCard {
-                            val recBadge = if (isRecording) {
-                                String.format(Locale.US, "● REC %02d:%02d", recElapsedSec / 60, recElapsedSec % 60)
-                            } else {
-                                "READY"
+                            val recBadge = when {
+                                !isPro -> "PRO"
+                                isRecording -> String.format(Locale.US, "● REC %02d:%02d", recElapsedSec / 60, recElapsedSec % 60)
+                                else -> "READY"
                             }
                             SectionTitle(
-                                title = "SESSION BENCHMARK RECORDER",
+                                title = str.sessionBenchmark,
                                 badge = recBadge,
-                                accent = if (isRecording) CrimsonAccent else EmeraldNeon,
+                                accent = when {
+                                    !isPro -> AmberVolt
+                                    isRecording -> CrimsonAccent
+                                    else -> EmeraldNeon
+                                },
                                 iconType = "record"
                             )
                             Button(
                                 onClick = {
-                                    if (isRecording) {
-                                        TelemetryHub.stopRecording()
-                                        isRecording = false
-                                        benchmarkHistory = TelemetryHub.loadHistory()
-                                    } else {
-                                        TelemetryHub.startRecording()
-                                        isRecording = true
+                                    requirePro {
+                                        if (isRecording) {
+                                            TelemetryHub.stopRecording()
+                                            isRecording = false
+                                            benchmarkHistory = TelemetryHub.loadHistory()
+                                        } else {
+                                            TelemetryHub.startRecording()
+                                            isRecording = true
+                                        }
+                                        pushOverlayUpdate()
                                     }
-                                    pushOverlayUpdate()
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(11.dp),
@@ -682,7 +767,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 )
                             ) {
                                 Text(
-                                    text = if (isRecording) "STOP & SIMPAN HASIL BENCHMARK" else "MULAI REKAM SESI GAME (TRUE 1% LOW)",
+                                    text = if (isRecording) str.stopRecordBtn else str.startRecordBtn,
                                     color = if (isRecording) Color.Black else TextPrimary,
                                     fontWeight = FontWeight.ExtraBold,
                                     fontSize = 11.5.sp
@@ -712,9 +797,9 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("RIWAYAT SESI (${benchmarkHistory.size})", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    Text("${str.sessionHistory} (${benchmarkHistory.size})", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                     Text(
-                                        text = "Hapus Semua",
+                                        text = str.clearAll,
                                         color = CrimsonAccent,
                                         fontSize = 10.5.sp,
                                         fontWeight = FontWeight.Bold,
@@ -894,7 +979,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     if (telemetry.cores.isNotEmpty()) {
                         item {
                             CyberCard {
-                                SectionTitle("CPU FREQUENCY MATRIX", "${telemetry.cores.size} CORES", activeAccent, iconType = "cpu")
+                                SectionTitle(str.cpuMatrix, "${telemetry.cores.size} CORES", activeAccent, iconType = "cpu")
                                 telemetry.cores.chunked(2).forEach { pair ->
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -939,28 +1024,31 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
 
                 1 -> {
                     item {
+                        val previewStyle = if (!isPro && (hudStyle == Prefs.STYLE_DECK || hudStyle == Prefs.STYLE_PILL)) Prefs.STYLE_GLASS else hudStyle
+                        val previewLayout = if (!isPro && layoutMode == Prefs.LAYOUT_VERTICAL) Prefs.LAYOUT_HORIZONTAL else layoutMode
+                        val previewFont = if (!isPro && (fontStyle == Prefs.FONT_CLEAN || fontStyle == Prefs.FONT_TECH)) Prefs.FONT_MONO_BOLD else fontStyle
                         CyberCard(borderColor = activeAccent.copy(alpha = 0.5f), accentGlow = activeAccent) {
-                            SectionTitle("LIVE HUD PREVIEW (1:1)", "$hudStyle • $layoutMode", activeAccent)
+                            SectionTitle(str.liveHudPreview, "$previewStyle • $previewLayout", activeAccent)
                             HudLivePreviewBox(
                                 telemetry = telemetry,
                                 fpsHistory = fpsHistory,
-                                layoutMode = layoutMode,
-                                hudStyle = hudStyle,
-                                fontStyle = fontStyle,
+                                layoutMode = previewLayout,
+                                hudStyle = previewStyle,
+                                fontStyle = previewFont,
                                 accent = activeAccent,
                                 bgAlpha = bgAlpha,
                                 textSizeSp = textSizeSp,
-                                showHudGraph = showHudGraph,
+                                showHudGraph = isPro && showHudGraph,
                                 sFps = sFps,
                                 sFrameTime = sFrameTime,
                                 sCpu = sCpu,
-                                sClock = sClock,
-                                sGpu = sGpu,
-                                sRam = sRam,
+                                sClock = isPro && sClock,
+                                sGpu = isPro && sGpu,
+                                sRam = isPro && sRam,
                                 sTemp = sTemp,
                                 sBatt = sBatt,
-                                sWatt = sWatt,
-                                sNet = sNet,
+                                sWatt = isPro && sWatt,
+                                sNet = isPro && sNet,
                                 maxScaleFps = effectiveGraphMax
                             )
                         }
@@ -968,93 +1056,118 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
 
                     item {
                         CyberCard {
-                            SectionTitle("GAYA, FONT & TEMA WARNA")
-                            Text("Gaya Kotak Overlay", color = TextSecondary, fontSize = 11.sp)
+                            SectionTitle(str.styleFontTheme)
+                            Text(str.overlayBoxStyle, color = TextSecondary, fontSize = 11.sp)
                             Spacer(Modifier.height(6.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                                 listOf(
-                                    Prefs.STYLE_GLASS to "Glass",
-                                    Prefs.STYLE_PILL to "Pill",
-                                    Prefs.STYLE_DECK to "Pro Deck",
-                                    Prefs.STYLE_MINIMAL to "Minimal"
-                                ).forEach { (key, label) ->
+                                    Triple(Prefs.STYLE_GLASS, "Glass", false),
+                                    Triple(Prefs.STYLE_PILL, "Pill", true),
+                                    Triple(Prefs.STYLE_DECK, "Deck", true),
+                                    Triple(Prefs.STYLE_MINIMAL, "Min", false)
+                                ).forEach { (key, label, needsPro) ->
+                                    val locked = needsPro && !isPro
                                     PillChip(
                                         label = label,
-                                        selected = hudStyle == key,
+                                        selected = hudStyle == key && !locked,
                                         accent = activeAccent,
+                                        locked = locked,
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        hudStyle = key
-                                        Prefs.hudStyle = key
-                                        pushOverlayUpdate()
+                                        if (locked) {
+                                            showProDialog = true
+                                        } else {
+                                            hudStyle = key
+                                            Prefs.hudStyle = key
+                                            pushOverlayUpdate()
+                                        }
                                     }
                                 }
                             }
 
                             Spacer(Modifier.height(11.dp))
-                            Text("Tipografi / Font HUD", color = TextSecondary, fontSize = 11.sp)
+                            Text(str.hudFontLabel, color = TextSecondary, fontSize = 11.sp)
                             Spacer(Modifier.height(6.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                                 listOf(
-                                    Prefs.FONT_SPORT to "Sport",
-                                    Prefs.FONT_MONO_BOLD to "Mono",
-                                    Prefs.FONT_CLEAN to "Clean",
-                                    Prefs.FONT_TECH to "Tech"
-                                ).forEach { (key, label) ->
+                                    Triple(Prefs.FONT_SPORT, "Sport", false),
+                                    Triple(Prefs.FONT_MONO_BOLD, "Mono", false),
+                                    Triple(Prefs.FONT_CLEAN, "Clean", true),
+                                    Triple(Prefs.FONT_TECH, "Tech", true)
+                                ).forEach { (key, label, needsPro) ->
+                                    val locked = needsPro && !isPro
                                     PillChip(
                                         label = label,
-                                        selected = fontStyle == key,
+                                        selected = fontStyle == key && !locked,
                                         accent = activeAccent,
+                                        locked = locked,
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        fontStyle = key
-                                        Prefs.fontStyle = key
-                                        pushOverlayUpdate()
+                                        if (locked) {
+                                            showProDialog = true
+                                        } else {
+                                            fontStyle = key
+                                            Prefs.fontStyle = key
+                                            pushOverlayUpdate()
+                                        }
                                     }
                                 }
                             }
 
                             Spacer(Modifier.height(11.dp))
-                            Text("Susunan Data", color = TextSecondary, fontSize = 11.sp)
+                            Text(str.dataLayoutLabel, color = TextSecondary, fontSize = 11.sp)
                             Spacer(Modifier.height(6.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 listOf(
-                                    Prefs.LAYOUT_HORIZONTAL to "Horizontal",
-                                    Prefs.LAYOUT_VERTICAL to "Vertikal",
-                                    Prefs.LAYOUT_MINI to "Mini"
-                                ).forEach { (key, label) ->
+                                    Triple(Prefs.LAYOUT_HORIZONTAL, str.layoutHorizontal, false),
+                                    Triple(Prefs.LAYOUT_VERTICAL, str.layoutVertical, true),
+                                    Triple(Prefs.LAYOUT_MINI, str.layoutMini, false)
+                                ).forEach { (key, label, needsPro) ->
+                                    val locked = needsPro && !isPro
                                     PillChip(
                                         label = label,
-                                        selected = layoutMode == key,
+                                        selected = layoutMode == key && !locked,
                                         accent = activeAccent,
+                                        locked = locked,
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        layoutMode = key
-                                        Prefs.layoutMode = key
-                                        pushOverlayUpdate()
+                                        if (locked) {
+                                            showProDialog = true
+                                        } else {
+                                            layoutMode = key
+                                            Prefs.layoutMode = key
+                                            pushOverlayUpdate()
+                                        }
                                     }
                                 }
                             }
 
                             Spacer(Modifier.height(11.dp))
-                            Text("Aksen Warna", color = TextSecondary, fontSize = 11.sp)
+                            Text(str.accentThemeLabel, color = TextSecondary, fontSize = 11.sp)
                             Spacer(Modifier.height(6.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                                 listOf(
-                                    Triple(Prefs.THEME_CYBER, "Cyber", CyberCyan),
-                                    Triple(Prefs.THEME_EMERALD, "Neon", EmeraldNeon),
-                                    Triple(Prefs.THEME_CRIMSON, "Fury", CrimsonAccent)
-                                ).forEach { (key, label, col) ->
+                                    Triple(Prefs.THEME_CYBER, "Cyber", CyberCyan to false),
+                                    Triple(Prefs.THEME_EMERALD, "Neon", EmeraldNeon to false),
+                                    Triple(Prefs.THEME_CRIMSON, "Fury", CrimsonAccent to true)
+                                ).forEach { (key, label, pair) ->
+                                    val (col, needsPro) = pair
+                                    val locked = needsPro && !isPro
                                     PillChip(
                                         label = label,
-                                        selected = themeMode == key,
+                                        selected = themeMode == key && !locked,
                                         accent = col,
                                         swatchColor = col,
+                                        locked = locked,
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        themeMode = key
-                                        Prefs.themeMode = key
-                                        pushOverlayUpdate()
+                                        if (locked) {
+                                            showProDialog = true
+                                        } else {
+                                            themeMode = key
+                                            Prefs.themeMode = key
+                                            pushOverlayUpdate()
+                                        }
                                     }
                                 }
                             }
@@ -1064,16 +1177,22 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     Triple(Prefs.THEME_AMBER, "Volt Amber", AmberVolt),
                                     Triple(Prefs.THEME_VIOLET, "Hyper Violet", VioletHyper)
                                 ).forEach { (key, label, col) ->
+                                    val locked = !isPro
                                     PillChip(
                                         label = label,
-                                        selected = themeMode == key,
+                                        selected = themeMode == key && !locked,
                                         accent = col,
                                         swatchColor = col,
+                                        locked = locked,
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        themeMode = key
-                                        Prefs.themeMode = key
-                                        pushOverlayUpdate()
+                                        if (locked) {
+                                            showProDialog = true
+                                        } else {
+                                            themeMode = key
+                                            Prefs.themeMode = key
+                                            pushOverlayUpdate()
+                                        }
                                     }
                                 }
                             }
@@ -1082,13 +1201,13 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
 
                     item {
                         CyberCard {
-                            SectionTitle("TRANSPARANSI, SKALA & KONTROL")
+                            SectionTitle(str.opacityScaleControl)
                             val pct = ((bgAlpha / 255f) * 100).roundToInt()
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text("Opacity Background", color = TextSecondary, fontSize = 12.sp)
+                                Text(str.bgOpacity, color = TextSecondary, fontSize = 12.sp)
                                 Text("$pct%", color = activeAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                             }
                             Slider(
@@ -1106,7 +1225,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text("Ukuran Font HUD", color = TextSecondary, fontSize = 12.sp)
+                                Text(str.hudFontSize, color = TextSecondary, fontSize = 12.sp)
                                 Text(String.format(Locale.US, "%.1f sp", textSizeSp), color = activeAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                             }
                             Slider(
@@ -1121,25 +1240,35 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             )
 
                             Spacer(Modifier.height(6.dp))
-                            Text("Kecepatan Update", color = TextSecondary, fontSize = 11.sp)
+                            Text(str.updateSpeed, color = TextSecondary, fontSize = 11.sp)
                             Spacer(Modifier.height(6.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                listOf(250L to "0.25s", 500L to "0.5s", 1000L to "1.0s").forEach { (ms, lbl) ->
+                                listOf(
+                                    Triple(250L, "0.25s", true),
+                                    Triple(500L, "0.5s", false),
+                                    Triple(1000L, "1.0s", false)
+                                ).forEach { (ms, lbl, needsPro) ->
+                                    val locked = needsPro && !isPro
                                     PillChip(
                                         label = lbl,
-                                        selected = intervalMs == ms,
+                                        selected = intervalMs == ms && !locked,
                                         accent = activeAccent,
+                                        locked = locked,
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        intervalMs = ms
-                                        Prefs.updateIntervalMs = ms
-                                        pushOverlayUpdate()
+                                        if (locked) {
+                                            showProDialog = true
+                                        } else {
+                                            intervalMs = ms
+                                            Prefs.updateIntervalMs = ms
+                                            pushOverlayUpdate()
+                                        }
                                     }
                                 }
                             }
 
                             Spacer(Modifier.height(10.dp))
-                            Text("Skala Maks Grafik FPS", color = TextSecondary, fontSize = 11.sp)
+                            Text(str.graphMaxScale, color = TextSecondary, fontSize = 11.sp)
                             Spacer(Modifier.height(6.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 listOf(0 to "Auto", 60 to "60", 90 to "90", 120 to "120").forEach { (cap, lbl) ->
@@ -1157,19 +1286,21 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             }
 
                             Spacer(Modifier.height(10.dp))
-                            ToggleRow("Grafik Bezier Mini di dalam HUD", showHudGraph, activeAccent) {
-                                showHudGraph = it
-                                Prefs.showHudGraph = it
-                                pushOverlayUpdate()
+                            ToggleRow(str.hudGraphToggle, isPro && showHudGraph, activeAccent, proLocked = !isPro) {
+                                requirePro {
+                                    showHudGraph = it
+                                    Prefs.showHudGraph = it
+                                    pushOverlayUpdate()
+                                }
                             }
-                            ToggleRow("Snap Otomatis ke Tepi Layar", snapToEdge, activeAccent) {
+                            ToggleRow(str.snapToEdgeToggle, snapToEdge, activeAccent) {
                                 snapToEdge = it
                                 Prefs.snapToEdge = it
                                 pushOverlayUpdate()
                             }
-                            ToggleRow("Kunci Sentuhan (Touch-Through)", touchLocked, activeAccent) {
+                            ToggleRow(str.lockTouchToggle, touchLocked, activeAccent) {
                                 if (!OverlayService.isRunning) {
-                                    Toast.makeText(context, "Nyalakan START HUD dulu untuk mengunci sentuhan", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, str.startHudBeforeLock, Toast.LENGTH_SHORT).show()
                                 } else if (OverlayService.isTouchLocked != it) {
                                     context.startService(Intent(context, OverlayService::class.java).apply {
                                         action = OverlayService.ACTION_TOGGLE_LOCK
@@ -1188,29 +1319,29 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             pushOverlayUpdate()
                         }
                         CyberCard {
-                            SectionTitle("PRESET POSISI LAYAR", if (isLand) "LANDSCAPE" else "PORTRAIT", activeAccent)
+                            SectionTitle(str.screenPosPreset, if (isLand) "LANDSCAPE" else "PORTRAIT", activeAccent)
                             val topSafeY = ((if (isLand) 14 else 38) * dm.density).toInt()
                             val sideMargin = (10 * dm.density).toInt()
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                PillChip("Kiri Atas", false, activeAccent, modifier = Modifier.weight(1f)) {
+                                PillChip(str.posTopLeft, false, activeAccent, modifier = Modifier.weight(1f)) {
                                     applyPreset(sideMargin, topSafeY)
                                 }
-                                PillChip("Tengah Atas", false, activeAccent, modifier = Modifier.weight(1f)) {
+                                PillChip(str.posTopCenter, false, activeAccent, modifier = Modifier.weight(1f)) {
                                     applyPreset((dm.widthPixels * 0.34f).toInt(), topSafeY)
                                 }
-                                PillChip("Kanan Atas", false, activeAccent, modifier = Modifier.weight(1f)) {
+                                PillChip(str.posTopRight, false, activeAccent, modifier = Modifier.weight(1f)) {
                                     applyPreset((dm.widthPixels * 0.68f).toInt(), topSafeY)
                                 }
                             }
                             Spacer(Modifier.height(8.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                PillChip("Kiri Bawah", false, activeAccent, modifier = Modifier.weight(1f)) {
+                                PillChip(str.posBotLeft, false, activeAccent, modifier = Modifier.weight(1f)) {
                                     applyPreset(sideMargin, (dm.heightPixels * 0.85f).toInt())
                                 }
-                                PillChip("Tengah Bawah", false, activeAccent, modifier = Modifier.weight(1f)) {
+                                PillChip(str.posBotCenter, false, activeAccent, modifier = Modifier.weight(1f)) {
                                     applyPreset((dm.widthPixels * 0.34f).toInt(), (dm.heightPixels * 0.85f).toInt())
                                 }
-                                PillChip("Kanan Bawah", false, activeAccent, modifier = Modifier.weight(1f)) {
+                                PillChip(str.posBotRight, false, activeAccent, modifier = Modifier.weight(1f)) {
                                     applyPreset((dm.widthPixels * 0.68f).toInt(), (dm.heightPixels * 0.85f).toInt())
                                 }
                             }
@@ -1221,7 +1352,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                 2 -> {
                     item {
                         CyberCard {
-                            SectionTitle("PRESET CEPAT SENSOR", "1-TAP", activeAccent)
+                            SectionTitle(str.sensorQuickPreset, "1-TAP", activeAccent)
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 PillChip("Esports", false, EmeraldNeon, modifier = Modifier.weight(1f)) {
                                     sFps = true; sFrameTime = false; sCpu = false; sClock = false
@@ -1231,21 +1362,25 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     Prefs.showWatt = false; Prefs.showNet = false
                                     pushOverlayUpdate()
                                 }
-                                PillChip("Benchmark", false, activeAccent, modifier = Modifier.weight(1f)) {
-                                    sFps = true; sFrameTime = true; sCpu = true; sClock = false
-                                    sGpu = true; sRam = false; sTemp = true; sBatt = false; sWatt = true; sNet = false
-                                    Prefs.showFps = true; Prefs.showFrameTime = true; Prefs.showCpu = true; Prefs.showClock = false
-                                    Prefs.showGpu = true; Prefs.showRam = false; Prefs.showTemp = true; Prefs.showBatteryPct = false
-                                    Prefs.showWatt = true; Prefs.showNet = false
-                                    pushOverlayUpdate()
+                                PillChip("Benchmark", false, activeAccent, locked = !isPro, modifier = Modifier.weight(1f)) {
+                                    requirePro {
+                                        sFps = true; sFrameTime = true; sCpu = true; sClock = false
+                                        sGpu = true; sRam = false; sTemp = true; sBatt = false; sWatt = true; sNet = false
+                                        Prefs.showFps = true; Prefs.showFrameTime = true; Prefs.showCpu = true; Prefs.showClock = false
+                                        Prefs.showGpu = true; Prefs.showRam = false; Prefs.showTemp = true; Prefs.showBatteryPct = false
+                                        Prefs.showWatt = true; Prefs.showNet = false
+                                        pushOverlayUpdate()
+                                    }
                                 }
-                                PillChip("Full Pro", false, VioletHyper, modifier = Modifier.weight(1f)) {
-                                    sFps = true; sFrameTime = true; sCpu = true; sClock = true
-                                    sGpu = true; sRam = true; sTemp = true; sBatt = true; sWatt = true; sNet = true
-                                    Prefs.showFps = true; Prefs.showFrameTime = true; Prefs.showCpu = true; Prefs.showClock = true
-                                    Prefs.showGpu = true; Prefs.showRam = true; Prefs.showTemp = true; Prefs.showBatteryPct = true
-                                    Prefs.showWatt = true; Prefs.showNet = true
-                                    pushOverlayUpdate()
+                                PillChip("Full Pro", false, VioletHyper, locked = !isPro, modifier = Modifier.weight(1f)) {
+                                    requirePro {
+                                        sFps = true; sFrameTime = true; sCpu = true; sClock = true
+                                        sGpu = true; sRam = true; sTemp = true; sBatt = true; sWatt = true; sNet = true
+                                        Prefs.showFps = true; Prefs.showFrameTime = true; Prefs.showCpu = true; Prefs.showClock = true
+                                        Prefs.showGpu = true; Prefs.showRam = true; Prefs.showTemp = true; Prefs.showBatteryPct = true
+                                        Prefs.showWatt = true; Prefs.showNet = true
+                                        pushOverlayUpdate()
+                                    }
                                 }
                             }
                         }
@@ -1253,36 +1388,88 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
 
                     item {
                         CyberCard {
-                            SectionTitle("SENSOR FRAME & PERFORMA", iconType = "pulse", accent = activeAccent)
+                            SectionTitle(str.sensorFramePerf, iconType = "pulse", accent = activeAccent)
                             SensorToggleRow("FPS (Frame Per Second)", "${telemetry.fps} FPS", EmeraldNeon, sFps, activeAccent) { sFps = it; Prefs.showFps = it; pushOverlayUpdate() }
                             SensorToggleRow("Frame Time", String.format(Locale.US, "%.1f ms", telemetry.frameTimeMs), CyberCyan, sFrameTime, activeAccent) { sFrameTime = it; Prefs.showFrameTime = it; pushOverlayUpdate() }
                             SensorToggleRow("CPU Total Load", "${telemetry.cpuLoadPercent}% (${telemetry.cpuSource})", TextPrimary, sCpu, activeAccent) { sCpu = it; Prefs.showCpu = it; pushOverlayUpdate() }
-                            SensorToggleRow("CPU Peak Clock", String.format(Locale.US, "%.2f GHz", telemetry.cpuMaxGhz), Color(0xFFCBD5E1), sClock, activeAccent) { sClock = it; Prefs.showClock = it; pushOverlayUpdate() }
-                            SensorToggleRow("GPU Load", telemetry.gpuLoadPercent?.let { "$it%" } ?: "N/A", PurpleGpu, sGpu, activeAccent) { sGpu = it; Prefs.showGpu = it; pushOverlayUpdate() }
+                            SensorToggleRow("CPU Peak Clock", String.format(Locale.US, "%.2f GHz", telemetry.cpuMaxGhz), Color(0xFFCBD5E1), isPro && sClock, activeAccent, proLocked = !isPro) {
+                                requirePro { sClock = it; Prefs.showClock = it; pushOverlayUpdate() }
+                            }
+                            SensorToggleRow("GPU Load", telemetry.gpuLoadPercent?.let { "$it%" } ?: "N/A", PurpleGpu, isPro && sGpu, activeAccent, proLocked = !isPro) {
+                                requirePro { sGpu = it; Prefs.showGpu = it; pushOverlayUpdate() }
+                            }
                         }
                     }
 
                     item {
                         CyberCard {
-                            SectionTitle("MEMORI, BATERAI & JARINGAN", iconType = "temp", accent = AmberVolt)
-                            SensorToggleRow("RAM Terpakai", String.format(Locale.US, "%.1f GB", telemetry.ramUsedGb), PinkRam, sRam, activeAccent) { sRam = it; Prefs.showRam = it; pushOverlayUpdate() }
-                            SensorToggleRow("Suhu Baterai", String.format(Locale.US, "%.1f °C", telemetry.batteryTempC), CyberCyan, sTemp, activeAccent) { sTemp = it; Prefs.showTemp = it; pushOverlayUpdate() }
-                            SensorToggleRow("Persentase Baterai", "${telemetry.batteryPercent}%", EmeraldNeon, sBatt, activeAccent) { sBatt = it; Prefs.showBatteryPct = it; pushOverlayUpdate() }
-                            SensorToggleRow("Konsumsi Daya", String.format(Locale.US, "%s%.1f W", if (telemetry.isCharging) "+" else "-", telemetry.powerWatts), AmberVolt, sWatt, activeAccent) { sWatt = it; Prefs.showWatt = it; pushOverlayUpdate() }
-                            SensorToggleRow("Kecepatan Download", "↓ ${telemetry.netDownKbps.toInt()} KB/s", EmeraldNeon, sNet, activeAccent) { sNet = it; Prefs.showNet = it; pushOverlayUpdate() }
+                            SectionTitle(str.sensorMemBattNet, iconType = "temp", accent = AmberVolt)
+                            SensorToggleRow("RAM Usage", String.format(Locale.US, "%.1f GB", telemetry.ramUsedGb), PinkRam, isPro && sRam, activeAccent, proLocked = !isPro) {
+                                requirePro { sRam = it; Prefs.showRam = it; pushOverlayUpdate() }
+                            }
+                            SensorToggleRow("Battery Temp", String.format(Locale.US, "%.1f °C", telemetry.batteryTempC), CyberCyan, sTemp, activeAccent) { sTemp = it; Prefs.showTemp = it; pushOverlayUpdate() }
+                            SensorToggleRow("Battery Level", "${telemetry.batteryPercent}%", EmeraldNeon, sBatt, activeAccent) { sBatt = it; Prefs.showBatteryPct = it; pushOverlayUpdate() }
+                            SensorToggleRow("Power Draw", String.format(Locale.US, "%s%.1f W", if (telemetry.isCharging) "+" else "-", telemetry.powerWatts), AmberVolt, isPro && sWatt, activeAccent, proLocked = !isPro) {
+                                requirePro { sWatt = it; Prefs.showWatt = it; pushOverlayUpdate() }
+                            }
+                            SensorToggleRow("Network Speed", "↓ ${telemetry.netDownKbps.toInt()} KB/s", EmeraldNeon, isPro && sNet, activeAccent, proLocked = !isPro) {
+                                requirePro { sNet = it; Prefs.showNet = it; pushOverlayUpdate() }
+                            }
                         }
                     }
                 }
 
                 else -> {
                     item {
-                        CyberCard {
-                            SectionTitle("1. IZIN FLOATING OVERLAY", if (overlayGranted) "AKTIF" else "WAJIB", if (overlayGranted) EmeraldNeon else AmberVolt)
+                        val statusBadge = when (proStatus.state) {
+                            LicenseState.PRO_ACTIVE -> str.proActiveStatus
+                            LicenseState.TRIAL_ACTIVE -> "${str.proTrialStatus} (${proStatus.expiryLabel})"
+                            LicenseState.EXPIRED -> str.proExpiredStatus
+                            LicenseState.FREE -> str.proPriceBadge
+                        }
+                        val statusColor = when (proStatus.state) {
+                            LicenseState.PRO_ACTIVE -> EmeraldNeon
+                            LicenseState.TRIAL_ACTIVE -> CyberCyan
+                            LicenseState.EXPIRED -> CrimsonAccent
+                            LicenseState.FREE -> AmberVolt
+                        }
+                        CyberCard(borderColor = statusColor.copy(alpha = 0.5f), accentGlow = statusColor) {
+                            SectionTitle(str.proTitle, statusBadge, statusColor, iconType = "bolt")
+                            val linkedMail = Prefs.linkedGoogleEmail
                             Text(
-                                text = "Diperlukan agar HUD FramePulse dapat melayang di atas game dan aplikasi lain.",
+                                text = when {
+                                    proStatus.state == LicenseState.PRO_ACTIVE && linkedMail.isNotBlank() ->
+                                        "$linkedMail • ${proStatus.tierLabel} (${proStatus.expiryLabel})"
+                                    proStatus.state == LicenseState.PRO_ACTIVE ->
+                                        "${proStatus.tierLabel} • ${proStatus.expiryLabel}"
+                                    linkedMail.isNotBlank() ->
+                                        "${str.proGoogleConnected}: $linkedMail"
+                                    else -> str.proSubtitle
+                                },
                                 color = TextSecondary,
                                 fontSize = 12.sp
                             )
+                            Spacer(Modifier.height(10.dp))
+                            Button(
+                                onClick = { showProDialog = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(11.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = if (isPro) CardSurfaceHigh else AmberVolt)
+                            ) {
+                                Text(
+                                    text = str.proManageBtn,
+                                    color = if (isPro) TextPrimary else Color.Black,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
+
+                    item {
+                        CyberCard {
+                            SectionTitle(str.setupOverlayTitle, if (overlayGranted) str.badgeActive else str.badgeRequired, if (overlayGranted) EmeraldNeon else AmberVolt)
+                            Text(text = str.setupOverlayDesc, color = TextSecondary, fontSize = 12.sp)
                             Spacer(Modifier.height(10.dp))
                             Button(
                                 onClick = {
@@ -1294,19 +1481,15 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 shape = RoundedCornerShape(11.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = CardSurfaceHigh)
                             ) {
-                                Text(if (overlayGranted) "Izin Overlay Sudah Aktif ✓" else "Buka Pengaturan Izin Overlay", color = TextPrimary, fontWeight = FontWeight.Bold)
+                                Text(if (overlayGranted) str.setupOverlayActive else str.setupOverlayOpen, color = TextPrimary, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
 
                     item {
                         CyberCard {
-                            SectionTitle("2. SHIZUKU BRIDGE (TRUE FPS & TURBO)", if (shizukuConnected) "TERHUBUNG" else "OPSIONAL", if (shizukuConnected) EmeraldNeon else CyberCyan)
-                            Text(
-                                text = "Menghubungkan ke SurfaceFlinger Android untuk FPS asli game, True 1% Low, sensor CPU/GPU SELinux, serta Game Turbo Engine tanpa root.",
-                                color = TextSecondary,
-                                fontSize = 12.sp
-                            )
+                            SectionTitle(str.setupShizukuTitle, if (shizukuConnected) str.badgeConnected else str.badgeOptional, if (shizukuConnected) EmeraldNeon else CyberCyan)
+                            Text(text = str.setupShizukuDesc, color = TextSecondary, fontSize = 12.sp)
                             Spacer(Modifier.height(8.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1317,7 +1500,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                     color = if (shizukuBinderAlive) EmeraldNeon else TextSecondary
                                 )
                                 StatusDotPill(
-                                    label = if (shizukuConnected) "Izin: Granted" else "Izin: Belum",
+                                    label = if (shizukuConnected) "Perm: Granted" else "Perm: Needed",
                                     color = if (shizukuConnected) EmeraldNeon else AmberVolt
                                 )
                             }
@@ -1326,14 +1509,14 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 onClick = {
                                     try {
                                         if (!Shizuku.pingBinder()) {
-                                            Toast.makeText(context, "Binder belum masuk. Tutup FramePulse dari Recent Apps lalu buka ulang (pastikan Shizuku running).", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, "Shizuku service not running. Open Shizuku app & restart FramePulse.", Toast.LENGTH_LONG).show()
                                         } else if (Shizuku.isPreV11()) {
-                                            Toast.makeText(context, "Versi Shizuku terlalu lama. Update Shizuku dulu.", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, "Please update Shizuku to the latest version.", Toast.LENGTH_LONG).show()
                                         } else if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
                                             Shizuku.requestPermission(100)
                                         } else {
                                             shizukuConnected = true
-                                            Toast.makeText(context, "Shizuku sudah terhubung!", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, str.setupShizukuConnected, Toast.LENGTH_SHORT).show()
                                         }
                                     } catch (t: Throwable) {
                                         Toast.makeText(context, "Shizuku error: ${t.message}", Toast.LENGTH_SHORT).show()
@@ -1343,25 +1526,46 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 shape = RoundedCornerShape(11.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0369A1))
                             ) {
-                                Text(if (shizukuConnected) "Shizuku Terhubung ✓" else "Hubungkan Izin Shizuku", color = TextPrimary, fontWeight = FontWeight.Bold)
+                                Text(if (shizukuConnected) str.setupShizukuConnected else str.setupShizukuConnect, color = TextPrimary, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
 
                     item {
                         CyberCard {
-                            SectionTitle("3. QUICK SETTINGS TILE (ONE UI)", "FITUR PRO", CyberCyan)
-                            Text(
-                                text = "Tarik panel notifikasi dari atas layar -> tap ikon Pensil (Edit tombol) -> seret ubin 'FramePulse HUD' ke panel cepat agar bisa menyalakan/mematikan HUD kapan saja saat main game.",
-                                color = TextSecondary,
-                                fontSize = 12.sp
-                            )
+                            SectionTitle(str.setupTileTitle, "PRO", CyberCyan)
+                            Text(text = str.setupTileDesc, color = TextSecondary, fontSize = 12.sp)
                         }
                     }
 
                     item {
                         CyberCard {
-                            SectionTitle("4. DIAGNOSTIK & CRASH GUARD", if (lastCrashLog.isBlank()) "BERSIH" else "ADA LOG", if (lastCrashLog.isBlank()) EmeraldNeon else CrimsonAccent)
+                            SectionTitle(str.setupLangTitle, AppStrings.resolveLangCode(langPref).uppercase(Locale.US), activeAccent)
+                            Text(text = str.setupLangDesc, color = TextSecondary, fontSize = 12.sp)
+                            Spacer(Modifier.height(10.dp))
+                            AppStrings.supportedLanguages.chunked(3).forEachIndexed { rowIdx, rowItems ->
+                                if (rowIdx > 0) Spacer(Modifier.height(7.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                    rowItems.forEach { (code, label) ->
+                                        PillChip(
+                                            label = label,
+                                            selected = langPref == code,
+                                            accent = activeAccent,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            langPref = code
+                                            Prefs.appLanguage = code
+                                            pushOverlayUpdate()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        CyberCard {
+                            SectionTitle(str.setupDiagTitle, if (lastCrashLog.isBlank()) str.badgeClean else str.badgeHasLog, if (lastCrashLog.isBlank()) EmeraldNeon else CrimsonAccent)
                             Text(
                                 text = "${Build.MANUFACTURER} ${Build.MODEL} • Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) • ${telemetry.displayRefreshHz}Hz • ${Runtime.getRuntime().availableProcessors()} Cores",
                                 color = TextSecondary,
@@ -1384,14 +1588,14 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                         }
                                         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                         cm.setPrimaryClip(ClipData.newPlainText("FramePulse SF Info", report))
-                                        Toast.makeText(context, "Info SurfaceFlinger disalin ke clipboard", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, str.sfDebugCopied, Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(11.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = CardSurfaceHigh)
                             ) {
-                                Text("Salin Info SurfaceFlinger (Debug FPS)", color = TextPrimary, fontSize = 12.sp)
+                                Text(str.copySfDebug, color = TextPrimary, fontSize = 12.sp)
                             }
                             if (lastCrashLog.isNotBlank()) {
                                 Spacer(Modifier.height(8.dp))
@@ -1407,13 +1611,13 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                         onClick = {
                                             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                             cm.setPrimaryClip(ClipData.newPlainText("FramePulse Crash", lastCrashLog))
-                                            Toast.makeText(context, "Log crash disalin", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, str.copyLog, Toast.LENGTH_SHORT).show()
                                         },
                                         modifier = Modifier.weight(1f),
                                         shape = RoundedCornerShape(10.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = CyberCyan)
                                     ) {
-                                        Text("Salin Log", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        Text(str.copyLog, color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                     }
                                     Button(
                                         onClick = {
@@ -1424,10 +1628,476 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                         shape = RoundedCornerShape(10.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = CardSurfaceHigh)
                                     ) {
-                                        Text("Hapus Log", color = TextPrimary, fontSize = 12.sp)
+                                        Text(str.clearLog, color = TextPrimary, fontSize = 12.sp)
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ProSupporterDialog(
+    str: AppLocaleStrings,
+    proStatus: ProStatus,
+    accent: Color,
+    onDismiss: () -> Unit,
+    onStatusChanged: (ProStatus) -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val isIndonesian = AppStrings.resolveLangCode() == "id"
+
+    var linkedEmail by remember { mutableStateOf(Prefs.linkedGoogleEmail) }
+    var selectedPlanId by remember { mutableStateOf("1Y") }
+    var isSyncing by remember { mutableStateOf(false) }
+    var showManualKey by remember { mutableStateOf(false) }
+    var keyInput by remember { mutableStateOf("") }
+    var feedbackMsg by remember { mutableStateOf("") }
+    var feedbackColor by remember { mutableStateOf(EmeraldNeon) }
+
+    val selectedPlan = ProLicenseManager.plans.firstOrNull { it.id == selectedPlanId } ?: ProLicenseManager.plans[2]
+
+    fun triggerCloudSync(emailToUse: String = linkedEmail) {
+        if (emailToUse.isBlank()) {
+            feedbackMsg = str.proSyncNeedEmail
+            feedbackColor = AmberVolt
+            return
+        }
+        isSyncing = true
+        feedbackMsg = ""
+        scope.launch {
+            val res = withContext(Dispatchers.IO) {
+                ProLicenseManager.syncWithCloud(context, emailToUse)
+            }
+            isSyncing = false
+            when (res) {
+                is ProLicenseManager.CloudSyncResult.Activated -> {
+                    val next = ProLicenseManager.getStatus(forceRefresh = true)
+                    onStatusChanged(next)
+                    Toast.makeText(context, "${str.proKeySuccess} (${res.expiryLabel})", Toast.LENGTH_LONG).show()
+                    onDismiss()
+                }
+                ProLicenseManager.CloudSyncResult.NotFound -> {
+                    feedbackMsg = str.proSyncNotFound
+                    feedbackColor = AmberVolt
+                }
+                ProLicenseManager.CloudSyncResult.Expired -> {
+                    feedbackMsg = str.proKeyExpired
+                    feedbackColor = AmberVolt
+                }
+                ProLicenseManager.CloudSyncResult.DeviceLimit -> {
+                    feedbackMsg = str.proSyncDeviceLimit
+                    feedbackColor = CrimsonAccent
+                }
+                ProLicenseManager.CloudSyncResult.NoEmail -> {
+                    feedbackMsg = str.proSyncNeedEmail
+                    feedbackColor = AmberVolt
+                }
+                ProLicenseManager.CloudSyncResult.ServerNotConfigured -> {
+                    feedbackMsg = str.proSyncNoServer
+                    feedbackColor = AmberVolt
+                }
+                is ProLicenseManager.CloudSyncResult.Error -> {
+                    feedbackMsg = "Sync error: ${res.detail}"
+                    feedbackColor = CrimsonAccent
+                }
+            }
+        }
+    }
+
+    val googlePickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val picked = result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)?.trim().orEmpty()
+            if (picked.isNotBlank()) {
+                linkedEmail = picked.lowercase(Locale.US)
+                Prefs.linkedGoogleEmail = linkedEmail
+                val updated = ProLicenseManager.getStatus(forceRefresh = true)
+                onStatusChanged(updated)
+                if (updated.tierLabel == "OWNER") {
+                    Toast.makeText(context, "Owner Access aktif (Lifetime)!", Toast.LENGTH_LONG).show()
+                    onDismiss()
+                } else if (ProLicenseManager.isCloudConfigured()) {
+                    triggerCloudSync(linkedEmail)
+                }
+            }
+        }
+    }
+
+    fun launchGooglePicker() {
+        try {
+            val intent = AccountManager.newChooseAccountIntent(
+                null,
+                null,
+                arrayOf("com.google"),
+                null,
+                null,
+                null,
+                null
+            )
+            googlePickerLauncher.launch(intent)
+        } catch (_: Throwable) {
+            Toast.makeText(context, "Google Account Picker unavailable on this device", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun openUrl(url: String) {
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (_: Throwable) {
+            Toast.makeText(context, "Unable to open browser", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun planTitle(id: String): String = when (id) {
+        "1M" -> str.proPlan1M
+        "6M" -> str.proPlan6M
+        "1Y" -> str.proPlan1Y
+        else -> str.proPlanLife
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(22.dp),
+            color = CardSurface,
+            border = androidx.compose.foundation.BorderStroke(1.dp, AmberVolt.copy(alpha = 0.5f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FramePulseLogoMark(accent = AmberVolt, modifier = Modifier.size(30.dp))
+                    Spacer(Modifier.width(9.dp))
+                    Column {
+                        Text(str.proTitle, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+                        val statusPillText = when (proStatus.state) {
+                            LicenseState.PRO_ACTIVE -> "${str.proActiveStatus} • ${proStatus.expiryLabel}"
+                            LicenseState.TRIAL_ACTIVE -> "${str.proTrialStatus} (${proStatus.expiryLabel})"
+                            LicenseState.EXPIRED -> "${str.proExpiredStatus} (${proStatus.expiryLabel})"
+                            LicenseState.FREE -> str.proFreeStatus
+                        }
+                        Spacer(Modifier.height(2.dp))
+                        StatusDotPill(
+                            label = statusPillText,
+                            color = if (proStatus.isPro) EmeraldNeon else AmberVolt
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Text(str.proSubtitle, color = TextSecondary, fontSize = 11.5.sp, lineHeight = 16.sp)
+
+                // === STEP 1: GOOGLE ACCOUNT LINK ===
+                Spacer(Modifier.height(10.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF070C17))
+                        .border(1.dp, if (linkedEmail.isNotBlank()) EmeraldNeon.copy(alpha = 0.45f) else CyberCyan.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                        .padding(10.dp)
+                ) {
+                    if (linkedEmail.isBlank()) {
+                        Column {
+                            Text(str.proGoogleHint, color = TextSecondary, fontSize = 11.sp, lineHeight = 15.sp)
+                            Spacer(Modifier.height(8.dp))
+                            Button(
+                                onClick = { launchGooglePicker() },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = CyberCyan)
+                            ) {
+                                Text(str.proConnectGoogle, color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 11.5.sp)
+                            }
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(str.proGoogleConnected, color = EmeraldNeon, fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = linkedEmail,
+                                    color = TextPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    maxLines = 1
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            PillChip(
+                                label = str.proSwitchGoogle,
+                                selected = false,
+                                accent = CyberCyan,
+                                onClick = { launchGooglePicker() }
+                            )
+                        }
+                    }
+                }
+
+                // === STEP 2: 4 SUBSCRIPTION TIERS GRID ===
+                Spacer(Modifier.height(10.dp))
+                ProLicenseManager.plans.chunked(2).forEachIndexed { rowIdx, pair ->
+                    if (rowIdx > 0) Spacer(Modifier.height(7.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(7.dp)
+                    ) {
+                        pair.forEach { plan ->
+                            val isSelected = selectedPlanId == plan.id
+                            val isHighlight = plan.id == "1Y" || plan.id == "LIFETIME"
+                            val cardAccent = if (plan.id == "LIFETIME") AmberVolt else if (plan.id == "1Y") EmeraldNeon else accent
+                            val badgeTxt = if (isIndonesian) plan.badgeId else plan.badgeEn
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isSelected) cardAccent.copy(alpha = 0.16f) else Color(0xFF070C17))
+                                    .border(
+                                        width = if (isSelected) 1.5.dp else 1.dp,
+                                        color = if (isSelected) cardAccent else CardBorder,
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                    .clickable { selectedPlanId = plan.id }
+                                    .padding(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = planTitle(plan.id),
+                                        color = TextPrimary,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(cardAccent.copy(alpha = if (isHighlight) 0.22f else 0.12f))
+                                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                                    ) {
+                                        Text(
+                                            text = badgeTxt,
+                                            color = cardAccent,
+                                            fontSize = 7.5.sp,
+                                            fontWeight = FontWeight.Black,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.height(5.dp))
+                                Text(
+                                    text = if (isIndonesian) plan.priceIdr else plan.priceUsd,
+                                    color = cardAccent,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Black,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Text(
+                                    text = if (isIndonesian) "Global ${plan.priceUsd}*" else "ID ${plan.priceIdr}",
+                                    color = TextMuted,
+                                    fontSize = 9.5.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(5.dp))
+                Text(str.proIntlFeeNote, color = TextMuted, fontSize = 9.5.sp, lineHeight = 13.sp)
+
+                // === FEATURES SUMMARY ===
+                Spacer(Modifier.height(8.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(Color(0xFF070C17))
+                        .border(1.dp, CardBorder, RoundedCornerShape(11.dp))
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    str.proFeatureList.forEach { feat ->
+                        Text("✓  $feat", color = TextPrimary, fontSize = 11.sp, lineHeight = 15.sp)
+                    }
+                }
+
+                // === STEP 3: PAY & AUTO-SYNC ===
+                if (proStatus.canStartTrial) {
+                    Spacer(Modifier.height(10.dp))
+                    Button(
+                        onClick = {
+                            if (ProLicenseManager.startFreeTrial()) {
+                                val next = ProLicenseManager.getStatus(forceRefresh = true)
+                                onStatusChanged(next)
+                                Toast.makeText(context, str.proTrialStarted, Toast.LENGTH_SHORT).show()
+                                onDismiss()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(11.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = accent)
+                    ) {
+                        Text(str.proStartTrial, color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
+                    }
+                }
+
+                Spacer(Modifier.height(9.dp))
+                Button(
+                    onClick = {
+                        if (linkedEmail.isBlank()) {
+                            Toast.makeText(context, str.proSyncNeedEmail, Toast.LENGTH_SHORT).show()
+                            launchGooglePicker()
+                            return@Button
+                        }
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        cm.setPrimaryClip(ClipData.newPlainText("FramePulse Google Email", linkedEmail))
+                        Toast.makeText(context, str.proTakoEmailCopied, Toast.LENGTH_LONG).show()
+                        openUrl(ProLicenseManager.DONATE_URL_ID)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(11.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldNeon)
+                ) {
+                    Text(
+                        text = "${str.proPayTakoPrefix} • ${selectedPlan.priceIdr}",
+                        color = Color.Black,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 11.5.sp
+                    )
+                }
+                Spacer(Modifier.height(7.dp))
+                Button(
+                    onClick = {
+                        if (linkedEmail.isBlank()) {
+                            Toast.makeText(context, str.proSyncNeedEmail, Toast.LENGTH_SHORT).show()
+                            launchGooglePicker()
+                            return@Button
+                        }
+                        openUrl(ProLicenseManager.buildGlobalCheckoutUrl(linkedEmail))
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(11.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0369A1))
+                ) {
+                    Text(
+                        text = "${str.proPayGlobalPrefix} • ${selectedPlan.priceUsd}",
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.5.sp
+                    )
+                }
+
+                Spacer(Modifier.height(7.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(0.9f),
+                        shape = RoundedCornerShape(11.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = CardSurfaceHigh)
+                    ) {
+                        Text(str.proCloseBtn, color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
+                    }
+                    Button(
+                        enabled = !isSyncing,
+                        onClick = { triggerCloudSync() },
+                        modifier = Modifier.weight(1.3f),
+                        shape = RoundedCornerShape(11.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AmberVolt)
+                    ) {
+                        Text(
+                            text = if (isSyncing) str.proSyncing else str.proSyncStatusBtn,
+                            color = Color.Black,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 11.5.sp
+                        )
+                    }
+                }
+
+                if (feedbackMsg.isNotBlank()) {
+                    Spacer(Modifier.height(7.dp))
+                    Text(feedbackMsg, color = feedbackColor, fontSize = 11.sp, fontWeight = FontWeight.Bold, lineHeight = 15.sp)
+                }
+
+                // Optional collapsible offline manual key fallback
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = if (showManualKey) "▾ ${str.proManualToggle}" else "▸ ${str.proManualToggle}",
+                    color = TextMuted,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showManualKey = !showManualKey }
+                        .padding(vertical = 4.dp)
+                )
+                if (showManualKey) {
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = keyInput,
+                            onValueChange = { keyInput = it },
+                            placeholder = { Text(str.proKeyPlaceholder, color = TextMuted, fontSize = 11.sp) },
+                            singleLine = true,
+                            textStyle = TextStyle(color = TextPrimary, fontFamily = FontFamily.Monospace, fontSize = 11.sp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = AmberVolt,
+                                unfocusedBorderColor = CardBorder,
+                                focusedContainerColor = Color(0xFF070C17),
+                                unfocusedContainerColor = Color(0xFF070C17)
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f)
+                        )
+                        Button(
+                            onClick = {
+                                when (val res = ProLicenseManager.redeemKey(keyInput)) {
+                                    is ProLicenseManager.RedeemResult.Success -> {
+                                        val next = ProLicenseManager.getStatus(forceRefresh = true)
+                                        onStatusChanged(next)
+                                        Toast.makeText(context, str.proKeySuccess, Toast.LENGTH_LONG).show()
+                                        onDismiss()
+                                    }
+                                    is ProLicenseManager.RedeemResult.Expired -> {
+                                        feedbackMsg = "${str.proKeyExpired} (${res.expiryLabel})"
+                                        feedbackColor = AmberVolt
+                                    }
+                                    ProLicenseManager.RedeemResult.Invalid -> {
+                                        feedbackMsg = str.proKeyInvalid
+                                        feedbackColor = CrimsonAccent
+                                    }
+                                }
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = AmberVolt),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 14.dp)
+                        ) {
+                            Text(str.proActivateBtn, color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 11.sp)
                         }
                     }
                 }
@@ -1460,7 +2130,13 @@ fun MetricStatBox(label: String, value: String, color: Color, modifier: Modifier
 }
 
 @Composable
-fun ToggleRow(label: String, checked: Boolean, accent: Color, onCheckedChange: (Boolean) -> Unit) {
+fun ToggleRow(
+    label: String,
+    checked: Boolean,
+    accent: Color,
+    proLocked: Boolean = false,
+    onCheckedChange: (Boolean) -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1469,7 +2145,17 @@ fun ToggleRow(label: String, checked: Boolean, accent: Color, onCheckedChange: (
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, color = TextPrimary, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(label, color = TextPrimary, fontSize = 13.sp, modifier = Modifier.weight(1f, fill = false))
+            if (proLocked) {
+                Spacer(Modifier.width(6.dp))
+                ProTagPill()
+            }
+        }
+        Spacer(Modifier.width(8.dp))
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
@@ -1485,6 +2171,7 @@ fun SensorToggleRow(
     valueColor: Color,
     checked: Boolean,
     accent: Color,
+    proLocked: Boolean = false,
     onCheckedChange: (Boolean) -> Unit
 ) {
     Row(
@@ -1496,7 +2183,13 @@ fun SensorToggleRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(label, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(label, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                if (proLocked) {
+                    Spacer(Modifier.width(6.dp))
+                    ProTagPill()
+                }
+            }
             Spacer(Modifier.height(2.dp))
             Box(
                 modifier = Modifier

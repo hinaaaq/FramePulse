@@ -254,16 +254,36 @@ fun StatusDotPill(label: String, color: Color) {
 }
 
 @Composable
+fun ProTagPill(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(AmberVolt.copy(alpha = 0.18f))
+            .border(1.dp, AmberVolt.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+            .padding(horizontal = 4.dp, vertical = 0.5.dp)
+    ) {
+        Text(
+            text = "PRO",
+            color = AmberVolt,
+            fontSize = 7.5.sp,
+            fontWeight = FontWeight.Black,
+            fontFamily = FontFamily.Monospace
+        )
+    }
+}
+
+@Composable
 fun PillChip(
     label: String,
     selected: Boolean,
     accent: Color = CyberCyan,
     swatchColor: Color? = null,
+    locked: Boolean = false,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val bg = if (selected) accent.copy(alpha = 0.18f) else Color(0xFF080E1B)
-    val border = if (selected) accent else CardBorder
+    val border = if (selected) accent else if (locked) AmberVolt.copy(alpha = 0.25f) else CardBorder
     val txtColor = if (selected) accent else TextSecondary
 
     Row(
@@ -272,7 +292,7 @@ fun PillChip(
             .background(bg)
             .border(1.dp, border, RoundedCornerShape(11.dp))
             .clickable { onClick() }
-            .padding(vertical = 9.dp, horizontal = 7.dp),
+            .padding(vertical = 9.dp, horizontal = 6.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -283,7 +303,7 @@ fun PillChip(
                     .clip(CircleShape)
                     .background(swatchColor)
             )
-            Spacer(Modifier.width(5.dp))
+            Spacer(Modifier.width(4.dp))
         }
         Text(
             text = label,
@@ -292,6 +312,10 @@ fun PillChip(
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
             maxLines = 1
         )
+        if (locked) {
+            Spacer(Modifier.width(4.dp))
+            ProTagPill()
+        }
     }
 }
 

@@ -12,11 +12,14 @@ class FramePulseTileService : TileService() {
 
     override fun onStartListening() {
         super.onStartListening()
+        Prefs.init(this)
         syncTileState()
     }
 
     override fun onClick() {
         super.onClick()
+        Prefs.init(this)
+        val str = AppStrings.forLang()
         if (!Settings.canDrawOverlays(this)) {
             val intent = Intent(this, MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -42,7 +45,7 @@ class FramePulseTileService : TileService() {
             })
             qsTile?.state = Tile.STATE_INACTIVE
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                qsTile?.subtitle = "Mati"
+                qsTile?.subtitle = str.tileOff
             }
         } else {
             ContextCompat.startForegroundService(this, Intent(this, OverlayService::class.java).apply {
@@ -50,7 +53,7 @@ class FramePulseTileService : TileService() {
             })
             qsTile?.state = Tile.STATE_ACTIVE
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                qsTile?.subtitle = "Aktif"
+                qsTile?.subtitle = str.tileActive
             }
         }
         qsTile?.updateTile()
@@ -58,9 +61,10 @@ class FramePulseTileService : TileService() {
 
     private fun syncTileState() {
         val tile = qsTile ?: return
+        val str = AppStrings.forLang()
         tile.state = if (OverlayService.isRunning) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            tile.subtitle = if (OverlayService.isRunning) "Aktif" else "Mati"
+            tile.subtitle = if (OverlayService.isRunning) str.tileActive else str.tileOff
         }
         tile.updateTile()
     }

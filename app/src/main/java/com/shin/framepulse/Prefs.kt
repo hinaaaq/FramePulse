@@ -179,4 +179,28 @@ object Prefs {
     var lastGamePackage: String
         get() = sp().getString("last_game_package", "") ?: ""
         set(v) = sp().edit().putString("last_game_package", v).apply()
+
+    var appLanguage: String
+        get() = sp().getString("app_language", "auto") ?: "auto"
+        set(v) = sp().edit().putString("app_language", v).apply()
+
+    var proLicenseKey: String
+        get() = sp().getString("pro_license_key", "") ?: ""
+        set(v) = sp().edit().putString("pro_license_key", v.trim()).apply()
+
+    var proTrialStartMs: Long
+        get() = sp().getLong("pro_trial_start_ms", 0L)
+        set(v) = sp().edit().putLong("pro_trial_start_ms", v).apply()
+
+    var linkedGoogleEmail: String
+        get() = sp().getString("linked_google_email", "") ?: ""
+        set(v) = sp().edit().putString("linked_google_email", v.trim().lowercase(java.util.Locale.US)).apply()
+
+    var proTierName: String
+        get() = sp().getString("pro_tier_name", "") ?: ""
+        set(v) = sp().edit().putString("pro_tier_name", v).apply()
+
+    var lastCloudSyncMs: Long
+        get() = sp().getLong("last_cloud_sync_ms", 0L)
+        set(v) = sp().edit().putLong("last_cloud_sync_ms", v).apply()
 }
