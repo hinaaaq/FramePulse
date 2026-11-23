@@ -371,7 +371,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 val badgeCol = if (isPro) activeAccent else AmberVolt
                                 val badgeTxt = when {
                                     proStatus.tierLabel == "OWNER" -> "OWNER"
-                                    proStatus.state == LicenseState.PRO_ACTIVE -> "PRO 3.2"
+                                    proStatus.state == LicenseState.PRO_ACTIVE -> "PRO"
                                     proStatus.state == LicenseState.TRIAL_ACTIVE -> "TRIAL"
                                     else -> "FREE • PRO"
                                 }

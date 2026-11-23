@@ -214,7 +214,7 @@ object ProLicenseManager {
                 connectTimeout = 8000
                 readTimeout = 8000
                 setRequestProperty("Accept", "application/json")
-                setRequestProperty("User-Agent", "FramePulse-Android/3.2")
+                setRequestProperty("User-Agent", "FramePulse-Android/1.0")
             }
 
             val code = conn.responseCode
