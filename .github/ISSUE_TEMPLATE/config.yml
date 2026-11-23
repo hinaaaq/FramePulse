@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Download Stable Release (v1.0.0)
+    url: https://github.com/hinaaaq/FramePulse/releases/latest
+    about: Unduh versi stabil terbaru beserta SHA-256 & link VirusTotal.

@@ -1,0 +1,17 @@
+name: Feature Request
+description: Usulkan fitur baru atau preset game untuk FramePulse
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: Fitur yang Diusulkan
+      description: Jelaskan fitur yang kamu inginkan dan manfaatnya.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Detail Tambahan (Opsional)
+      placeholder: "Misal: nama paket game, referensi UI, atau kebutuhan sensor."

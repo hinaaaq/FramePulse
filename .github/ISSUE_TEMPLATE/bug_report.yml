@@ -1,0 +1,34 @@
+name: Bug Report
+description: Laporkan bug, crash, atau kendala telemetri di perangkat kamu
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Deskripsi Masalah
+      description: Jelaskan secara singkat apa yang terjadi.
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Perangkat & Versi Android
+      placeholder: "Contoh: Samsung Galaxy A24, Android 16 (One UI)"
+    validations:
+      required: true
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Mode yang Dipakai
+      options:
+        - Tier 1 (Standard - Tanpa Shizuku)
+        - Tier 2 (Shizuku Terhubung)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Diagnostics / Crash Log (Opsional)
+      description: Tempel hasil "Copy Log" atau "Copy SurfaceFlinger Info" dari tab Setup.
+      render: text
