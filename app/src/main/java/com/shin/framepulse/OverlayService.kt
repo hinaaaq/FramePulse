@@ -365,10 +365,6 @@ class OverlayService : Service() {
             label = if (TelemetryHub.isRecording) "STOP" else "REC",
             accentHex = "#FBBF24"
         ) {
-            if (!ProLicenseManager.isProUnlocked()) {
-                Toast.makeText(this, AppStrings.forLang().proLockedToast, Toast.LENGTH_SHORT).show()
-                return@makeActionChip
-            }
             if (TelemetryHub.isRecording) {
                 TelemetryHub.stopRecording()
                 recBtnView?.text = "REC"

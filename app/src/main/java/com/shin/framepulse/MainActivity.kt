@@ -160,6 +160,8 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
     var proStatus by remember { mutableStateOf(ProLicenseManager.getStatus(forceRefresh = true)) }
     val isPro = proStatus.isPro
     var showProDialog by remember { mutableStateOf(false) }
+    var availableUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
+    LaunchedEffect(Unit) { availableUpdate = UpdateChecker.checkLatest(context) }
 
     var isAppForeground by remember { mutableStateOf(true) }
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -493,6 +495,14 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
             when (selectedTab) {
                     0 -> {
                         item {
+                            availableUpdate?.let { upd ->
+                                UpdateAvailableBanner(
+                                    info = upd,
+                                    accent = activeAccent,
+                                    onDismiss = { availableUpdate = null }
+                                )
+                                Spacer(Modifier.height(10.dp))
+                            }
                             val homeEmail = Prefs.linkedGoogleEmail
                             val ownerFlag = ProLicenseManager.isOwnerEmail(homeEmail)
                             val proFlag = ProLicenseManager.isProUnlocked() || ownerFlag
@@ -767,7 +777,6 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     item {
                         CyberCard {
                             val recBadge = when {
-                                !isPro -> "PRO"
                                 isRecording -> String.format(Locale.US, "● REC %02d:%02d", recElapsedSec / 60, recElapsedSec % 60)
                                 else -> "READY"
                             }
@@ -775,7 +784,6 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 title = str.sessionBenchmark,
                                 badge = recBadge,
                                 accent = when {
-                                    !isPro -> AmberVolt
                                     isRecording -> CrimsonAccent
                                     else -> EmeraldNeon
                                 },
@@ -783,7 +791,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             )
                             Button(
                                 onClick = {
-                                    requirePro {
+                                    run {
                                         if (isRecording) {
                                             TelemetryHub.stopRecording()
                                             isRecording = false
