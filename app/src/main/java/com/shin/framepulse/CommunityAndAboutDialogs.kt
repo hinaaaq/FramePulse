@@ -30,6 +30,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -40,17 +41,53 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
+import java.util.Locale
+import kotlin.math.roundToInt
+
+private const val MIN_BENCHMARK_SECONDS = 15
 
 data class LeaderboardEntry(
     val nickname: String,
     val device: String,
     val game: String,
     val avgFps: Int,
+    val onePctLow: Int = 0,
     val tempC: Int,
     val score: Int,
+    val source: String = "",
     val isPro: Boolean,
     val isOwner: Boolean
 )
+
+private fun computeLeaderboardProof(
+    email: String,
+    device: String,
+    game: String,
+    avgFps: Int,
+    onePctLow: Int,
+    tempC: Int,
+    durationSec: Int,
+    source: String
+): String {
+    val cleanEmail = email.trim().lowercase(Locale.US)
+    val raw = "fp-ac-v1:$cleanEmail:$device:$game:$avgFps:$onePctLow:$tempC:$durationSec:$source"
+    val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
+    return digest.joinToString("") { "%02x".format(it) }
+}
+
+private fun detectDefaultGameName(): String {
+    val pkg = Prefs.lastGamePackage.lowercase(Locale.US)
+    return when {
+        pkg.contains("valorant") || pkg.contains("codev") -> "Valorant Mobile"
+        pkg.contains("mobile.legends") -> "MLBB"
+        pkg.contains("pubg") || pkg.contains("tencent.ig") -> "PUBG Mobile"
+        pkg.contains("freefire") -> "Free Fire"
+        pkg.contains("sgame") -> "HOK"
+        pkg.contains("genshin") -> "Genshin"
+        else -> "Valorant Mobile"
+    }
+}
 
 suspend fun fetchLeaderboardTop(): Result<List<LeaderboardEntry>> = withContext(Dispatchers.IO) {
     runCatching {
@@ -60,7 +97,8 @@ suspend fun fetchLeaderboardTop(): Result<List<LeaderboardEntry>> = withContext(
             connectTimeout = 12000
             readTimeout = 12000
         }
-        val text = conn.inputStream.bufferedReader().use { it.readText() }
+        val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+        val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
         val json = JSONObject(text)
         val arr = json.optJSONArray("entries")
         val out = mutableListOf<LeaderboardEntry>()
@@ -73,8 +111,10 @@ suspend fun fetchLeaderboardTop(): Result<List<LeaderboardEntry>> = withContext(
                         device = o.optString("device", "Android"),
                         game = o.optString("game", "Valorant Mobile"),
                         avgFps = o.optInt("avgFps", 60),
+                        onePctLow = o.optInt("onePctLow", 0),
                         tempC = o.optInt("tempC", 38),
                         score = o.optInt("score", 600),
+                        source = o.optString("source", ""),
                         isPro = o.optBoolean("isPro", false),
                         isOwner = o.optBoolean("isOwner", false)
                     )
@@ -89,8 +129,7 @@ suspend fun submitLeaderboardScore(
     email: String,
     nickname: String,
     game: String,
-    avgFps: Int,
-    tempC: Int,
+    benchmark: BenchmarkSummary,
     isPro: Boolean
 ): Result<Pair<Int, List<LeaderboardEntry>>> = withContext(Dispatchers.IO) {
     runCatching {
@@ -102,19 +141,50 @@ suspend fun submitLeaderboardScore(
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
         }
-        val deviceName = "${Build.MANUFACTURER} ${Build.MODEL}".trim()
+        val deviceName = "${Build.MANUFACTURER} ${Build.MODEL}"
+            .replace(Regex("[^a-zA-Z0-9 _.-]"), "")
+            .trim()
+            .take(24)
+            .ifBlank { "Android" }
+        val avgFps = benchmark.avgFps.roundToInt().coerceIn(10, 144)
+        val onePctLow = benchmark.onePercentLowFps.coerceIn(1, avgFps)
+        val tempC = benchmark.peakTempC.roundToInt().coerceIn(20, 65)
+        val durationSec = benchmark.durationSec.coerceAtLeast(1)
+        val source = if (benchmark.sourceLabel == "SF") "SF" else "STD"
+        val proof = computeLeaderboardProof(
+            email = email,
+            device = deviceName,
+            game = game,
+            avgFps = avgFps,
+            onePctLow = onePctLow,
+            tempC = tempC,
+            durationSec = durationSec,
+            source = source
+        )
+
         val payload = JSONObject()
             .put("email", email)
             .put("nickname", nickname)
             .put("device", deviceName)
             .put("game", game)
             .put("avgFps", avgFps)
+            .put("onePctLow", onePctLow)
             .put("tempC", tempC)
+            .put("durationSec", durationSec)
+            .put("source", source)
+            .put("proof", proof)
             .put("isPro", isPro)
             .toString()
+
         conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
-        val text = conn.inputStream.bufferedReader().use { it.readText() }
-        val json = JSONObject(text)
+        val code = conn.responseCode
+        val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+        val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
+        val json = JSONObject(text.ifBlank { "{}" })
+        if (code !in 200..299 || !json.optBoolean("ok", false)) {
+            error(json.optString("error", "HTTP $code"))
+        }
+
         val rank = json.optInt("rank", 0)
         val arr = json.optJSONArray("entries")
         val out = mutableListOf<LeaderboardEntry>()
@@ -127,8 +197,10 @@ suspend fun submitLeaderboardScore(
                         device = o.optString("device", "Android"),
                         game = o.optString("game", "Valorant Mobile"),
                         avgFps = o.optInt("avgFps", 60),
+                        onePctLow = o.optInt("onePctLow", 0),
                         tempC = o.optInt("tempC", 38),
                         score = o.optInt("score", 600),
+                        source = o.optString("source", ""),
                         isPro = o.optBoolean("isPro", false),
                         isOwner = o.optBoolean("isOwner", false)
                     )
@@ -144,7 +216,10 @@ fun saveFlexCardToGallery(
     nickname: String,
     game: String,
     avgFps: Int,
+    onePctLow: Int,
     tempC: Int,
+    durationSec: Int,
+    sourceLabel: String,
     rank: Int,
     isPro: Boolean,
     isOwner: Boolean
@@ -178,41 +253,41 @@ fun saveFlexCardToGallery(
 
         val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = 0xFFFFFFFF.toInt()
-            textSize = 54f
+            textSize = 52f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
         val accentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = if (isOwner) 0xFFFACC15.toInt() else 0xFF34D399.toInt()
-            textSize = 34f
+            textSize = 32f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
         val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = 0xFFCBD5E1.toInt()
-            textSize = 30f
+            textSize = 28f
         }
         val bigStatPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = if (isOwner) 0xFFFDE047.toInt() else 0xFF38BDF8.toInt()
-            textSize = 96f
+            textSize = 92f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
 
-        val headerText = if (isOwner) "FRAMEPULSE // FOUNDER & DEV EDITION" else "FRAMEPULSE PRO // BENCHMARK CARD"
-        canvas.drawText(headerText, 54f, 88f, accentPaint)
+        val headerText = if (isOwner) "FRAMEPULSE // FOUNDER & DEV EDITION" else "FRAMEPULSE // VERIFIED BENCHMARK"
+        canvas.drawText(headerText, 54f, 84f, accentPaint)
         val displayNick = if (isOwner) "${nickname.ifBlank { "Shin" }} [OWNER]" else nickname.ifBlank { "Player" }
-        canvas.drawText(displayNick, 54f, 165f, titlePaint)
-        canvas.drawText("Game: $game  •  Device: ${Build.MODEL}", 54f, 215f, subPaint)
+        canvas.drawText(displayNick, 54f, 160f, titlePaint)
+        canvas.drawText("Game: $game  •  Device: ${Build.MODEL}", 54f, 210f, subPaint)
 
-        canvas.drawText("$avgFps FPS", 54f, 365f, bigStatPaint)
-        canvas.drawText("Suhu: ${tempC}°C", 54f, 435f, titlePaint)
+        canvas.drawText("$avgFps FPS", 54f, 355f, bigStatPaint)
+        canvas.drawText("1% Low: $onePctLow FPS  •  Peak: ${tempC}°C  •  ${durationSec}s ($sourceLabel)", 54f, 428f, subPaint)
         val rankText = when {
             isOwner && rank > 0 -> "OWNER PRIVILEGE • GLOBAL RANK #$rank"
             isOwner -> "VERIFIED DEVELOPER / OWNER"
             rank > 0 -> "GLOBAL RANK #$rank"
             isPro -> "PRO VERIFIED"
-            else -> "COMMUNITY TIER"
+            else -> "VERIFIED RECORDING"
         }
-        canvas.drawText(rankText, 54f, 505f, accentPaint)
-        canvas.drawText("github.com/hinaaaq/FramePulse", 54f, 570f, subPaint)
+        canvas.drawText(rankText, 54f, 500f, accentPaint)
+        canvas.drawText("github.com/hinaaaq/FramePulse", 54f, 568f, subPaint)
 
         val filename = "FramePulse_Flex_${System.currentTimeMillis()}.png"
         val values = ContentValues().apply {
@@ -245,9 +320,15 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
     var submitting by remember { mutableStateOf(false) }
     var myRank by remember { mutableStateOf(0) }
     var nickname by remember { mutableStateOf(if (isOwner) "Shin" else Build.MODEL.take(14)) }
-    var selectedGame by remember { mutableStateOf("Valorant Mobile") }
-    var fpsInput by remember { mutableStateOf("60") }
-    var tempInput by remember { mutableStateOf("38") }
+    var selectedGame by remember { mutableStateOf(detectDefaultGameName()) }
+
+    val validSessions = remember {
+        TelemetryHub.loadHistory().filter {
+            it.durationSec >= MIN_BENCHMARK_SECONDS && it.avgFps >= 10f && it.peakTempC >= 20f
+        }
+    }
+    var selectedSessionIdx by remember { mutableIntStateOf(0) }
+    val activeBenchmark = validSessions.getOrNull(selectedSessionIdx)
 
     val games = listOf("Valorant Mobile", "MLBB", "PUBG Mobile", "Free Fire", "HOK", "Genshin")
 
@@ -265,6 +346,15 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
             Column(modifier = Modifier.padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Leaderboard & Flex Card", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF10B981).copy(alpha = 0.2f))
+                            .border(1.dp, Color(0xFF10B981).copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text("VERIFIED", color = Color(0xFF34D399), fontWeight = FontWeight.ExtraBold, fontSize = 9.sp)
+                    }
                     if (isOwner) {
                         Box(
                             modifier = Modifier
@@ -272,11 +362,15 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
                                 .background(Brush.horizontalGradient(listOf(Color(0xFFDC2626), Color(0xFFF59E0B))))
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
-                            Text("DEV", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 10.sp)
+                            Text("DEV", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 9.sp)
                         }
                     }
                 }
-                Text("Adu kestabilan FPS & suhu adem antar pengguna FramePulse.", color = Color(0xFF94A3B8), fontSize = 11.sp)
+                Text(
+                    "Anti-Cheat aktif: FPS & suhu dikunci otomatis dari hasil Benchmark Recorder.",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 11.sp
+                )
                 Spacer(Modifier.height(10.dp))
 
                 OutlinedTextField(
@@ -286,24 +380,103 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                    OutlinedTextField(
-                        value = fpsInput,
-                        onValueChange = { fpsInput = it.filter { c -> c.isDigit() }.take(3) },
-                        label = { Text("Avg FPS", fontSize = 11.sp) },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        value = tempInput,
-                        onValueChange = { tempInput = it.filter { c -> c.isDigit() }.take(2) },
-                        label = { Text("Suhu °C", fontSize = 11.sp) },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
+                Spacer(Modifier.height(8.dp))
+
+                if (activeBenchmark == null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFF1E1B2E))
+                            .border(1.dp, Color(0xFFFBBF24).copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+                            .padding(12.dp)
+                    ) {
+                        Column {
+                            Text(
+                                "Belum ada rekaman Benchmark valid",
+                                color = Color(0xFFFBBF24),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                "Rekam sesi game minimal ${MIN_BENCHMARK_SECONDS} detik lewat Benchmark Recorder di tab Monitor agar skor terverifikasi.",
+                                color = Color(0xFFCBD5E1),
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp
+                            )
+                        }
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFF0A1424))
+                            .border(1.dp, Color(0xFF10B981).copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+                            .padding(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "LOCKED BENCHMARK • ${activeBenchmark.timestamp}",
+                                color = Color(0xFF34D399),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            if (validSessions.size > 1) {
+                                TextButton(
+                                    onClick = { selectedSessionIdx = (selectedSessionIdx + 1) % validSessions.size },
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(24.dp)
+                                ) {
+                                    Text(
+                                        "Sesi ${selectedSessionIdx + 1}/${validSessions.size} ↻",
+                                        color = Color(0xFF38BDF8),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            MetricStatBox(
+                                "AVG FPS",
+                                String.format(Locale.US, "%.1f", activeBenchmark.avgFps),
+                                Color(0xFF34D399),
+                                Modifier.weight(1f)
+                            )
+                            MetricStatBox(
+                                "1% LOW",
+                                "${activeBenchmark.onePercentLowFps}",
+                                Color(0xFFFBBF24),
+                                Modifier.weight(1f)
+                            )
+                            MetricStatBox(
+                                "PEAK °C",
+                                String.format(Locale.US, "%.1f°", activeBenchmark.peakTempC),
+                                Color(0xFF38BDF8),
+                                Modifier.weight(1f)
+                            )
+                            MetricStatBox(
+                                "SRC",
+                                "${activeBenchmark.durationSec}s ${activeBenchmark.sourceLabel}",
+                                Color(0xFFC084FC),
+                                Modifier.weight(1f)
+                            )
+                        }
+                    }
                 }
-                Spacer(Modifier.height(6.dp))
+
+                Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                     Button(
                         onClick = {
@@ -317,20 +490,19 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
                         Text("Game: $selectedGame", color = Color(0xFF38BDF8), fontSize = 11.sp, maxLines = 1)
                     }
                     Button(
+                        enabled = activeBenchmark != null && !submitting,
                         onClick = {
-                            if (submitting) return@Button
+                            val bench = activeBenchmark ?: return@Button
                             submitting = true
-                            val fps = fpsInput.toIntOrNull() ?: 60
-                            val temp = tempInput.toIntOrNull() ?: 38
                             scope.launch {
-                                submitLeaderboardScore(email, nickname, selectedGame, fps, temp, isPro || isOwner)
+                                submitLeaderboardScore(email, nickname, selectedGame, bench, isPro || isOwner)
                                     .onSuccess { (rank, list) ->
                                         myRank = rank
                                         entries = list
-                                        Toast.makeText(context, "Skor masuk! Rank kamu #$rank", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Skor terverifikasi masuk! Rank #$rank", Toast.LENGTH_SHORT).show()
                                     }
-                                    .onFailure {
-                                        Toast.makeText(context, "Gagal kirim skor (cek internet / deploy Worker)", Toast.LENGTH_SHORT).show()
+                                    .onFailure { err ->
+                                        Toast.makeText(context, "Ditolak / gagal: ${err.message}", Toast.LENGTH_LONG).show()
                                     }
                                 submitting = false
                             }
@@ -341,12 +513,25 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
                         Text(if (submitting) "..." else "Kirim Skor", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                     }
                 }
+
                 Spacer(Modifier.height(6.dp))
                 Button(
+                    enabled = activeBenchmark != null,
                     onClick = {
-                        val fps = fpsInput.toIntOrNull() ?: 60
-                        val temp = tempInput.toIntOrNull() ?: 38
-                        val ok = saveFlexCardToGallery(context, nickname, selectedGame, fps, temp, myRank, isPro, isOwner)
+                        val bench = activeBenchmark ?: return@Button
+                        val ok = saveFlexCardToGallery(
+                            context = context,
+                            nickname = nickname,
+                            game = selectedGame,
+                            avgFps = bench.avgFps.roundToInt(),
+                            onePctLow = bench.onePercentLowFps,
+                            tempC = bench.peakTempC.roundToInt(),
+                            durationSec = bench.durationSec,
+                            sourceLabel = bench.sourceLabel,
+                            rank = myRank,
+                            isPro = isPro,
+                            isOwner = isOwner
+                        )
                         Toast.makeText(
                             context,
                             if (ok) "Kartu Pamer disimpan ke Galeri (Pictures/FramePulse)!" else "Gagal menyimpan kartu",
@@ -379,7 +564,7 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
                     Text("Belum ada skor. Jadilah Rank #1 pertama!", color = Color(0xFF94A3B8), fontSize = 11.5.sp)
                 } else {
                     LazyColumn(
-                        modifier = Modifier.heightIn(max = 210.dp),
+                        modifier = Modifier.heightIn(max = 200.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         itemsIndexed(entries) { idx, item ->
@@ -426,10 +611,12 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
                                             }
                                         }
                                     }
-                                    Text("${item.game} • ${item.device}", color = Color(0xFF94A3B8), fontSize = 10.sp)
+                                    val srcTag = if (item.source.isNotBlank()) " • ${item.source}" else ""
+                                    Text("${item.game} • ${item.device}$srcTag", color = Color(0xFF94A3B8), fontSize = 10.sp)
                                 }
                                 Column(horizontalAlignment = Alignment.End) {
-                                    Text("${item.avgFps} FPS", color = Color(0xFF34D399), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    val lowTxt = if (item.onePctLow > 0) " (${item.onePctLow})" else ""
+                                    Text("${item.avgFps} FPS$lowTxt", color = Color(0xFF34D399), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                     Text("${item.tempC}°C • ${item.score} pts", color = Color(0xFFCBD5E1), fontSize = 10.sp)
                                 }
                             }
@@ -490,7 +677,7 @@ fun AboutAppDialog(isOwner: Boolean, onDismiss: () -> Unit) {
                         Text("VERIFIED OWNER / DEV PRIVILEGE", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 10.sp)
                     }
                 } else {
-                    Text("Real Shizuku FPS & Thermal Engine", color = Color(0xFF34D399), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Shizuku Telemetry & Thermal Engine", color = Color(0xFF34D399), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                 }
                 Spacer(Modifier.height(12.dp))
 
