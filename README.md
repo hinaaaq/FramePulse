@@ -37,6 +37,7 @@
 Berbeda dari aplikasi *game booster* yang penuh klaim palsu (*placebo*), iklan, atau memaksa `am kill-all`, FramePulse hanya mengeksekusi API sistem Android yang nyata dan menampilkan status kemampuan perangkat secara transparan.
 
 ### Keunggulan Utama
+- **100% Fitur Inti Gratis & Android 16 Ready:** Seluruh metrik HUD (FPS, 1% Low, CPU, GPU, RAM, Watt, Net), grafik real-time, dan Preset Per-Game terbuka gratis tanpa paywall — termasuk parser `SurfaceFlinger` khusus Android 16 (API 36).
 - **Capability Engine Transparan:** Menampilkan status kemampuan perangkat secara langsung (`Android API ✓`, `Shizuku ✓`, `SurfaceFlinger ✓`, `Game Mode ✓`).
 - **Update Tanpa Uninstall:** Semua rilis resmi ditandatangani dengan *release keystore* permanen. Saat ada versi baru, cukup install langsung menimpa versi lama — pengaturan HUD, tema, lisensi, dan riwayat benchmark tetap aman.
 - **Verifikasi Integritas Terbuka:** Setiap rilis disertai **SHA-256 Checksum** (`SHA256SUMS.txt`) dan tautan cek **VirusTotal** langsung dari pipeline GitHub Actions.
@@ -105,6 +106,12 @@ APK dibangun langsung oleh <strong>GitHub Actions</strong> dari source code di r
 
 ---
 
+<details>
+<summary><strong>Apakah semua fitur FramePulse gratis?</strong></summary>
+<br/>
+Ya. Seluruh fitur inti (Floating HUD lengkap, True Game FPS, Benchmark Recorder, Game Booster, dan Preset Per-Game) <strong>100% gratis tanpa iklan</strong>. Tersedia <em>Supporter Pass</em> sukarela bagi yang ingin mendukung pengembangan aplikasi sekaligus membuka tema visual tambahan.
+</details>
+
 ## Lisensi
 
 Hak Cipta © 2026 **Shin ([@hinaaaq](https://github.com/hinaaaq))**. Lihat file [LICENSE](LICENSE) untuk detail lisensi dan [SECURITY.md](SECURITY.md) untuk kebijakan keamanan.
@@ -116,4 +123,3 @@ Contoh keluaran **Verified Flex Card** hasil rekaman sesi benchmark nyata pada p
 - **87 FPS** rata-rata dengan **1% Low: 83 FPS** dan suhu puncak **38°C** pada sesi rekaman 17 detik (*Valorant Mobile*).
 - Terverifikasi tanpa input skor manual dan siap dibagikan langsung ke komunitas maupun **Global Leaderboard**.
 
-> Simpan tangkapan layar tambahan (tab Monitor, HUD melayang, atau HUD Studio) ke `docs/screenshots/` dan perbarui tautannya sesuai nama file di repositori Anda.
