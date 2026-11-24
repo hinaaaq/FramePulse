@@ -757,49 +757,12 @@ class SystemMonitor(private val context: Context) {
         return true
     }
 
-    private fun queryGfxInfoFps(nowMs: Long, maxHz: Int): Boolean {
-        if (!ensureShell()) return false
-        val pkg = detectForegroundPackage() ?: return false
-        if (pkg == "com.shin.framepulse") return false
-        val lines = runShellCmd("dumpsys gfxinfo '$pkg' framestats")
-        if (lines.isEmpty()) return false
-        val stamps = ArrayList<Long>(128)
-        var inData = false
-        for (line in lines) {
-            val t = line.trim()
-            if (t == "---PROFILEDATA---") {
-                inData = !inData
-                continue
-            }
-            if (!inData || t.startsWith("Flags")) continue
-            val cols = t.split(',')
-            if (cols.size >= 14) {
-                val completed = cols[13].trim().toLongOrNull() ?: 0L
-                if (completed > 0L && completed < Long.MAX_VALUE / 2) {
-                    stamps.add(completed)
-                }
-            }
-        }
-        if (stamps.size < 3) return false
-        stamps.sort()
-        val newest = stamps.last()
-        val window = stamps.filter { it > newest - 1_000_000_000L }
-        if (window.size < 2) return false
-        val spanNs = window.last() - window.first()
-        if (spanNs <= 50_000_000L) return false
-        val est = (((window.size - 1) * 1_000_000_000.0) / spanNs).roundToInt().coerceIn(1, maxHz)
-        sfFps = est
-        sfFrameMs = 1000f / est
-        lastSfQueryMs = nowMs
-        return true
-    }
-
     fun collect(): TelemetryData {
         val nowMs = SystemClock.elapsedRealtime()
         val fg = TelemetryHub.isAppForeground
         val maxHz = detectDisplayRefreshHz()
 
-        val trueFpsOk = querySurfaceFlingerFps(nowMs, maxHz) || queryGfxInfoFps(nowMs, maxHz)
+        val trueFpsOk = querySurfaceFlingerFps(nowMs, maxHz)
         setChoreographerEnabled(!trueFpsOk)
         val fps = if (trueFpsOk) sfFps else choreoFps
         val frameMs = if (trueFpsOk) sfFrameMs else choreoFrameMs
