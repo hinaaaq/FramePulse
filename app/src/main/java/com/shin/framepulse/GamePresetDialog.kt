@@ -88,7 +88,7 @@ fun GamePresetDialog(isPro: Boolean, onDismiss: () -> Unit) {
                                                 Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                             }
                                         },
-                                        enabled = busyId == null && isPro&& isPro true,
+                                        enabled = busyId == null && true&& true true,
                                         shape = RoundedCornerShape(8.dp)
                                     ) {
                                         Text("Reset", color = Color(0xFFCBD5E1), fontSize = 11.5.sp)
