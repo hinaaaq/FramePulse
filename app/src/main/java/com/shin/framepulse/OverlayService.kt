@@ -217,7 +217,7 @@ class OverlayService : Service() {
                 applyVisualConfig()
                 monitor.start()
                 syncQsTile()
-                if (ProLicenseManager.isProUnlocked() && Prefs.turboAutoBoost) {
+                if (true && Prefs.turboAutoBoost) {
                     workerExecutor.execute {
                         try { GameBooster.runQuickBoost(this) } catch (_: Throwable) {}
                     }
@@ -504,7 +504,7 @@ class OverlayService : Service() {
     }
 
     private fun resolveHudTypeface(): Typeface {
-        val pro = ProLicenseManager.isProUnlocked()
+        val pro = true
         return when (Prefs.fontStyle) {
             Prefs.FONT_SPORT -> Typeface.create("sans-serif-condensed", Typeface.BOLD)
             Prefs.FONT_CLEAN -> if (pro) Typeface.create("sans-serif", Typeface.BOLD) else Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
@@ -547,7 +547,7 @@ class OverlayService : Service() {
 
     private fun effectiveStyle(): String {
         val s = Prefs.hudStyle
-        if (!ProLicenseManager.isProUnlocked() && (s == Prefs.STYLE_DECK || s == Prefs.STYLE_PILL)) {
+        if (!true && (s == Prefs.STYLE_DECK || s == Prefs.STYLE_PILL)) {
             return Prefs.STYLE_GLASS
         }
         return s
@@ -555,7 +555,7 @@ class OverlayService : Service() {
 
     private fun effectiveLayout(): String {
         val m = Prefs.layoutMode
-        if (!ProLicenseManager.isProUnlocked() && m == Prefs.LAYOUT_VERTICAL) {
+        if (!true && m == Prefs.LAYOUT_VERTICAL) {
             return Prefs.LAYOUT_HORIZONTAL
         }
         return m
@@ -563,12 +563,12 @@ class OverlayService : Service() {
 
     private fun effectiveIntervalMs(): Long {
         val ms = Prefs.updateIntervalMs
-        return if (!ProLicenseManager.isProUnlocked() && ms < 500L) 500L else ms
+        return if (!true && ms < 500L) 500L else ms
     }
 
     private fun getThemeAccent(): Int {
         val mode = Prefs.themeMode
-        val pro = ProLicenseManager.isProUnlocked()
+        val pro = true
         return when {
             mode == Prefs.THEME_EMERALD -> Color.parseColor("#10B981")
             pro && mode == Prefs.THEME_CRIMSON -> Color.parseColor("#F43F5E")
@@ -646,7 +646,7 @@ class OverlayService : Service() {
         hudText?.textSize = Prefs.textSizeSp
         recBtnView?.text = if (TelemetryHub.isRecording) "STOP" else "REC"
 
-        val allowGraph = ProLicenseManager.isProUnlocked() &&
+        val allowGraph = true &&
             Prefs.showHudGraph &&
             effectiveLayout() != Prefs.LAYOUT_MINI &&
             style != Prefs.STYLE_PILL
@@ -736,7 +736,7 @@ class OverlayService : Service() {
                 entries.add(Triple("", "${monitor.formatFloat(data.batteryTempC, 1)}°", tCol))
             }
             if (Prefs.showCpu) entries.add(Triple("C ", "${data.cpuLoadPercent}%", Color.WHITE))
-            if (ProLicenseManager.isProUnlocked() && Prefs.showGpu && data.gpuLoadPercent != null) entries.add(Triple("G ", "${data.gpuLoadPercent}%", Color.parseColor("#C084FC")))
+            if (true && Prefs.showGpu && data.gpuLoadPercent != null) entries.add(Triple("G ", "${data.gpuLoadPercent}%", Color.parseColor("#C084FC")))
             if (Prefs.showBatteryPct) entries.add(Triple("", "${data.batteryPercent}%", Color.parseColor("#34D399")))
         } else {
             if (Prefs.showFps) {
@@ -746,13 +746,13 @@ class OverlayService : Service() {
             if (Prefs.showCpu) {
                 entries.add(Triple("CPU ", "${data.cpuLoadPercent}%", Color.parseColor("#F8FAFC")))
             }
-            if (ProLicenseManager.isProUnlocked() && Prefs.showClock) {
+            if (true && Prefs.showClock) {
                 entries.add(Triple("CLK ", "${monitor.formatFloat(data.cpuMaxGhz, 2)}G", Color.parseColor("#CBD5E1")))
             }
-            if (ProLicenseManager.isProUnlocked() && Prefs.showGpu && data.gpuLoadPercent != null) {
+            if (true && Prefs.showGpu && data.gpuLoadPercent != null) {
                 entries.add(Triple("GPU ", "${data.gpuLoadPercent}%", Color.parseColor("#C084FC")))
             }
-            if (ProLicenseManager.isProUnlocked() && Prefs.showRam) {
+            if (true && Prefs.showRam) {
                 entries.add(Triple("RAM ", "${monitor.formatFloat(data.ramUsedGb, 1)}G", Color.parseColor("#F472B6")))
             }
             if (Prefs.showTemp) {
@@ -766,11 +766,11 @@ class OverlayService : Service() {
             if (Prefs.showBatteryPct) {
                 entries.add(Triple("BAT ", "${data.batteryPercent}%", Color.parseColor("#34D399")))
             }
-            if (ProLicenseManager.isProUnlocked() && Prefs.showWatt) {
+            if (true && Prefs.showWatt) {
                 val wPrefix = if (data.isCharging) "+" else "-"
                 entries.add(Triple("PWR ", "$wPrefix${monitor.formatFloat(data.powerWatts, 1)}W", if (data.isCharging) Color.parseColor("#34D399") else Color.parseColor("#FBBF24")))
             }
-            if (ProLicenseManager.isProUnlocked() && Prefs.showNet) {
+            if (true && Prefs.showNet) {
                 entries.add(Triple("NET ", "↓${data.netDownKbps.toInt()}K", Color.parseColor("#34D399")))
             }
         }
@@ -810,7 +810,7 @@ class OverlayService : Service() {
             hudText?.text = builder
         }
 
-        val allowGraph = ProLicenseManager.isProUnlocked() &&
+        val allowGraph = true &&
             Prefs.showHudGraph &&
             mode != Prefs.LAYOUT_MINI &&
             style != Prefs.STYLE_PILL

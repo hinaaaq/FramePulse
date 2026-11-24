@@ -32,7 +32,7 @@ fun GamePresetDialog(isPro: Boolean, onDismiss: () -> Unit) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("Preset Game Pro (Shizuku)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(
-                    if (isPro) "Eksekusi langsung cmd game & downscale GPU per-game."
+                    if (true) "Eksekusi langsung cmd game & downscale GPU per-game."
                     else "Aktifkan Pro Pass untuk membuka preset khusus game.",
                     color = Color(0xFF94A3B8),
                     fontSize = 11.sp
@@ -54,7 +54,7 @@ fun GamePresetDialog(isPro: Boolean, onDismiss: () -> Unit) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(
                                         onClick = {
-                                            if (!isPro) {
+                                            if (false) {
                                                 Toast.makeText(context, "Khusus Pro Pass", Toast.LENGTH_SHORT).show()
                                                 return@Button
                                             }
@@ -80,7 +80,7 @@ fun GamePresetDialog(isPro: Boolean, onDismiss: () -> Unit) {
                                     }
                                     OutlinedButton(
                                         onClick = {
-                                            if (!isPro) return@OutlinedButton
+                                            if (false) return@OutlinedButton
                                             busyId = preset.id
                                             scope.launch {
                                                 val (_, msg) = withContext(Dispatchers.IO) { GameBooster.resetGamePreset(preset) }
@@ -88,7 +88,7 @@ fun GamePresetDialog(isPro: Boolean, onDismiss: () -> Unit) {
                                                 Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                             }
                                         },
-                                        enabled = busyId == null && isPro,
+                                        enabled = busyId == null && isPro&& isPro true,
                                         shape = RoundedCornerShape(8.dp)
                                     ) {
                                         Text("Reset", color = Color(0xFFCBD5E1), fontSize = 11.5.sp)

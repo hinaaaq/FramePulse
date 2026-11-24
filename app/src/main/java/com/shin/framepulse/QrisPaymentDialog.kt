@@ -132,7 +132,7 @@ fun QrisPaymentDialog(
             repeat(60) {
                 delay(5000)
                 if (onCheckPaid()) {
-                    Toast.makeText(context, "Pembayaran diterima! Pro Pass aktif.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Terima kasih sudah donate! Supporter Pass aktif.", Toast.LENGTH_LONG).show()
                     onDismiss()
                     return@LaunchedEffect
                 }
@@ -207,7 +207,7 @@ fun QrisPaymentDialog(
                                     val paid = onCheckPaid()
                                     checking = false
                                     if (paid) {
-                                        Toast.makeText(context, "Pembayaran diterima! Pro Pass aktif.", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, "Terima kasih sudah donate! Supporter Pass aktif.", Toast.LENGTH_LONG).show()
                                         onDismiss()
                                     } else {
                                         Toast.makeText(context, "Belum lunas. Coba lagi beberapa detik setelah bayar.", Toast.LENGTH_SHORT).show()

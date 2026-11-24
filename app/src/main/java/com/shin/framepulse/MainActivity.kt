@@ -600,7 +600,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                         val turboBadge = when {
                             thermalCooldown -> "COOLDOWN"
                             fixedPerfLive -> "PERF HAL ON"
-                            turboAutoBoost && isPro -> "AUTO READY"
+                            turboAutoBoost -> "AUTO READY"
                             else -> "SHIZUKU"
                         }
                         val turboBadgeColor = when {
@@ -652,7 +652,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                             val res = withContext(Dispatchers.IO) {
                                                 GameBooster.runQuickBoost(
                                                     context = context,
-                                                    enableFixedPerf = isPro && Prefs.turboFixedPerf
+                                                    enableFixedPerf = Prefs.turboFixedPerf
                                                 )
                                             }
                                             boostStatusText = res.summaryMessage
@@ -705,13 +705,13 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 }
                             }
                             Spacer(Modifier.height(8.dp))
-                            ToggleRow(str.autoBoostLabel, isPro && turboAutoBoost, activeAccent, proLocked = !isPro) {
+                            ToggleRow(str.autoBoostLabel, turboAutoBoost, activeAccent, proLocked = false) {
                                 requirePro {
                                     turboAutoBoost = it
                                     Prefs.turboAutoBoost = it
                                 }
                             }
-                            ToggleRow(str.fixedPerfLabel, isPro && turboFixedPerf, EmeraldNeon, proLocked = !isPro) { enabled ->
+                            ToggleRow(str.fixedPerfLabel, turboFixedPerf, EmeraldNeon, proLocked = false) { enabled ->
                                 requirePro {
                                     turboFixedPerf = enabled
                                     Prefs.turboFixedPerf = enabled
@@ -739,10 +739,10 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                         label = lbl,
                                         selected = thermalLimitC.roundToInt() == lim.roundToInt(),
                                         accent = AmberVolt,
-                                        locked = !isPro && lim != 43f,
+                                        locked = false,
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        if (lim == 43f || isPro) {
+                                        if (true) {
                                             thermalLimitC = lim
                                             Prefs.turboThermalLimitC = lim
                                         } else {
@@ -1067,9 +1067,9 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
 
                 1 -> {
                     item {
-                        val previewStyle = if (!isPro && (hudStyle == Prefs.STYLE_DECK || hudStyle == Prefs.STYLE_PILL)) Prefs.STYLE_GLASS else hudStyle
-                        val previewLayout = if (!isPro && layoutMode == Prefs.LAYOUT_VERTICAL) Prefs.LAYOUT_HORIZONTAL else layoutMode
-                        val previewFont = if (!isPro && (fontStyle == Prefs.FONT_CLEAN || fontStyle == Prefs.FONT_TECH)) Prefs.FONT_MONO_BOLD else fontStyle
+                        val previewStyle = if (false && (hudStyle == Prefs.STYLE_DECK || hudStyle == Prefs.STYLE_PILL)) Prefs.STYLE_GLASS else hudStyle
+                        val previewLayout = if (false && layoutMode == Prefs.LAYOUT_VERTICAL) Prefs.LAYOUT_HORIZONTAL else layoutMode
+                        val previewFont = if (false && (fontStyle == Prefs.FONT_CLEAN || fontStyle == Prefs.FONT_TECH)) Prefs.FONT_MONO_BOLD else fontStyle
                         CyberCard(borderColor = activeAccent.copy(alpha = 0.5f), accentGlow = activeAccent) {
                             SectionTitle(str.liveHudPreview, "$previewStyle • $previewLayout", activeAccent)
                             HudLivePreviewBox(
@@ -1081,17 +1081,17 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 accent = activeAccent,
                                 bgAlpha = bgAlpha,
                                 textSizeSp = textSizeSp,
-                                showHudGraph = isPro && showHudGraph,
+                                showHudGraph = showHudGraph,
                                 sFps = sFps,
                                 sFrameTime = sFrameTime,
                                 sCpu = sCpu,
-                                sClock = isPro && sClock,
-                                sGpu = isPro && sGpu,
-                                sRam = isPro && sRam,
+                                sClock = sClock,
+                                sGpu = sGpu,
+                                sRam = sRam,
                                 sTemp = sTemp,
                                 sBatt = sBatt,
-                                sWatt = isPro && sWatt,
-                                sNet = isPro && sNet,
+                                sWatt = sWatt,
+                                sNet = sNet,
                                 maxScaleFps = effectiveGraphMax
                             )
                         }
@@ -1329,7 +1329,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             }
 
                             Spacer(Modifier.height(10.dp))
-                            ToggleRow(str.hudGraphToggle, isPro && showHudGraph, activeAccent, proLocked = !isPro) {
+                            ToggleRow(str.hudGraphToggle, showHudGraph, activeAccent, proLocked = false) {
                                 requirePro {
                                     showHudGraph = it
                                     Prefs.showHudGraph = it
@@ -1435,10 +1435,10 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             SensorToggleRow("FPS (Frame Per Second)", "${telemetry.fps} FPS", EmeraldNeon, sFps, activeAccent) { sFps = it; Prefs.showFps = it; pushOverlayUpdate() }
                             SensorToggleRow("Frame Time", String.format(Locale.US, "%.1f ms", telemetry.frameTimeMs), CyberCyan, sFrameTime, activeAccent) { sFrameTime = it; Prefs.showFrameTime = it; pushOverlayUpdate() }
                             SensorToggleRow("CPU Total Load", "${telemetry.cpuLoadPercent}% (${telemetry.cpuSource})", TextPrimary, sCpu, activeAccent) { sCpu = it; Prefs.showCpu = it; pushOverlayUpdate() }
-                            SensorToggleRow("CPU Peak Clock", String.format(Locale.US, "%.2f GHz", telemetry.cpuMaxGhz), Color(0xFFCBD5E1), isPro && sClock, activeAccent, proLocked = !isPro) {
+                            SensorToggleRow("CPU Peak Clock", String.format(Locale.US, "%.2f GHz", telemetry.cpuMaxGhz), Color(0xFFCBD5E1), sClock, activeAccent, proLocked = false) {
                                 requirePro { sClock = it; Prefs.showClock = it; pushOverlayUpdate() }
                             }
-                            SensorToggleRow("GPU Load", telemetry.gpuLoadPercent?.let { "$it%" } ?: "N/A", PurpleGpu, isPro && sGpu, activeAccent, proLocked = !isPro) {
+                            SensorToggleRow("GPU Load", telemetry.gpuLoadPercent?.let { "$it%" } ?: "N/A", PurpleGpu, sGpu, activeAccent, proLocked = false) {
                                 requirePro { sGpu = it; Prefs.showGpu = it; pushOverlayUpdate() }
                             }
                         }
@@ -1447,15 +1447,15 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     item {
                         CyberCard {
                             SectionTitle(str.sensorMemBattNet, iconType = "temp", accent = AmberVolt)
-                            SensorToggleRow("RAM Usage", String.format(Locale.US, "%.1f GB", telemetry.ramUsedGb), PinkRam, isPro && sRam, activeAccent, proLocked = !isPro) {
+                            SensorToggleRow("RAM Usage", String.format(Locale.US, "%.1f GB", telemetry.ramUsedGb), PinkRam, sRam, activeAccent, proLocked = false) {
                                 requirePro { sRam = it; Prefs.showRam = it; pushOverlayUpdate() }
                             }
                             SensorToggleRow("Battery Temp", String.format(Locale.US, "%.1f °C", telemetry.batteryTempC), CyberCyan, sTemp, activeAccent) { sTemp = it; Prefs.showTemp = it; pushOverlayUpdate() }
                             SensorToggleRow("Battery Level", "${telemetry.batteryPercent}%", EmeraldNeon, sBatt, activeAccent) { sBatt = it; Prefs.showBatteryPct = it; pushOverlayUpdate() }
-                            SensorToggleRow("Power Draw", String.format(Locale.US, "%s%.1f W", if (telemetry.isCharging) "+" else "-", telemetry.powerWatts), AmberVolt, isPro && sWatt, activeAccent, proLocked = !isPro) {
+                            SensorToggleRow("Power Draw", String.format(Locale.US, "%s%.1f W", if (telemetry.isCharging) "+" else "-", telemetry.powerWatts), AmberVolt, sWatt, activeAccent, proLocked = false) {
                                 requirePro { sWatt = it; Prefs.showWatt = it; pushOverlayUpdate() }
                             }
-                            SensorToggleRow("Network Speed", "↓ ${telemetry.netDownKbps.toInt()} KB/s", EmeraldNeon, isPro && sNet, activeAccent, proLocked = !isPro) {
+                            SensorToggleRow("Network Speed", "↓ ${telemetry.netDownKbps.toInt()} KB/s", EmeraldNeon, sNet, activeAccent, proLocked = false) {
                                 requirePro { sNet = it; Prefs.showNet = it; pushOverlayUpdate() }
                             }
                         }

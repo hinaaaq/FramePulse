@@ -283,7 +283,7 @@ fun saveFlexCardToGallery(
             isOwner && rank > 0 -> "OWNER PRIVILEGE • GLOBAL RANK #$rank"
             isOwner -> "VERIFIED DEVELOPER / OWNER"
             rank > 0 -> "GLOBAL RANK #$rank"
-            isPro -> "PRO VERIFIED"
+            isPro -> "SUPPORTER"
             else -> "VERIFIED RECORDING"
         }
         canvas.drawText(rankText, 54f, 500f, accentPaint)

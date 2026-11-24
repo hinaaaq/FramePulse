@@ -295,7 +295,7 @@ fun ThemePickerDialog(
                                 )
                                 .clickable {
                                     if (locked) {
-                                        Toast.makeText(context, "Khusus Pro Pass", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Khusus Supporter (Donate Dev)", Toast.LENGTH_SHORT).show()
                                         return@clickable
                                     }
                                     AppThemeManager.saveTheme(context, theme.id)
