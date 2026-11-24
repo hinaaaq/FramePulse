@@ -207,4 +207,8 @@ object Prefs {
     var hasSeenWelcome: Boolean
         get() = sp().getBoolean("has_seen_welcome", false)
         set(v) = sp().edit().putBoolean("has_seen_welcome", v).apply()
+
+    var skippedUpdateVersion: String
+        get() = sp().getString("skipped_update_version", "") ?: ""
+        set(v) = sp().edit().putString("skipped_update_version", v).apply()
 }

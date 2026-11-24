@@ -173,6 +173,8 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
     val isPro = proStatus.isPro
     var showProDialog by remember { mutableStateOf(false) }
     var availableUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
+    val updateCheckScope = rememberCoroutineScope()
+    var isCheckingUpdate by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { availableUpdate = UpdateChecker.checkLatest(context) }
 
     var isAppForeground by remember { mutableStateOf(true) }
@@ -1617,6 +1619,32 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                         CyberCard {
                             SectionTitle(str.setupLangTitle, AppStrings.resolveLangCode(langPref).uppercase(Locale.US), activeAccent)
                             Text(text = str.setupLangDesc, color = TextSecondary, fontSize = 12.sp)
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = {
+                        if (!isCheckingUpdate) {
+                            isCheckingUpdate = true
+                            updateCheckScope.launch {
+                                val found = UpdateChecker.checkLatest(context, ignoreSkipped = true)
+                                isCheckingUpdate = false
+                                if (found != null) {
+                                    availableUpdate = found
+                                } else {
+                                    Toast.makeText(context, "FramePulse sudah versi terbaru!", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text(
+                        text = if (isCheckingUpdate) "Mengecek Update..." else "Cek Update Sekarang",
+                        color = EmeraldNeon,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
                 Spacer(modifier = Modifier.height(10.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),

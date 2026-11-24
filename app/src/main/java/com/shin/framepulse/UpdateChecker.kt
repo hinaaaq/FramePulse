@@ -6,6 +6,7 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,18 +39,24 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Locale
 
 data class AppUpdateInfo(
     val latestVersion: String,
     val currentVersion: String,
     val downloadUrl: String,
-    val changelog: String = ""
+    val changelog: String = "",
+    val apkSizeLabel: String = "",
+    val publishedDate: String = ""
 )
 
 object UpdateChecker {
     private const val RELEASES_API = "https://api.github.com/repos/hinaaaq/FramePulse/releases/latest"
 
-    suspend fun checkLatest(context: Context): AppUpdateInfo? = withContext(Dispatchers.IO) {
+    suspend fun checkLatest(
+        context: Context,
+        ignoreSkipped: Boolean = false
+    ): AppUpdateInfo? = withContext(Dispatchers.IO) {
         runCatching {
             val currentVer = try {
                 @Suppress("DEPRECATION")
@@ -76,7 +83,13 @@ object UpdateChecker {
             val currentClean = currentVer.removePrefix("v").removePrefix("V")
             if (!isNewerVersion(latestClean, currentClean)) return@runCatching null
 
+            val latestLabel = "v$latestClean"
+            if (!ignoreSkipped && Prefs.skippedUpdateVersion.equals(latestLabel, ignoreCase = true)) {
+                return@runCatching null
+            }
+
             var apkUrl = json.optString("html_url", "https://github.com/hinaaaq/FramePulse/releases/latest")
+            var apkSizeLabel = ""
             val assets = json.optJSONArray("assets")
             if (assets != null) {
                 for (i in 0 until assets.length()) {
@@ -85,21 +98,46 @@ object UpdateChecker {
                     val dl = asset.optString("browser_download_url", "")
                     if (name.endsWith(".apk", ignoreCase = true) && dl.startsWith("https://")) {
                         apkUrl = dl
+                        val sizeBytes = asset.optLong("size", 0L)
+                        if (sizeBytes > 0L) {
+                            val mb = sizeBytes / (1024.0 * 1024.0)
+                            apkSizeLabel = String.format(Locale.US, "%.1f MB", mb)
+                        }
                         break
                     }
                 }
             }
 
-            val notes = json.optString("body", "").trim()
+            val publishedRaw = json.optString("published_at", "").trim()
+            val publishedDate = if (publishedRaw.length >= 10) publishedRaw.substring(0, 10) else ""
+
+            val rawNotes = json.optString("body", "").trim()
+            val cleanedNotes = cleanMarkdown(rawNotes)
                 .ifBlank { "Perbaikan performa, stabilitas, dan dukungan perangkat terbaru." }
 
             AppUpdateInfo(
-                latestVersion = "v$latestClean",
+                latestVersion = latestLabel,
                 currentVersion = "v$currentClean",
                 downloadUrl = apkUrl,
-                changelog = notes
+                changelog = cleanedNotes,
+                apkSizeLabel = apkSizeLabel,
+                publishedDate = publishedDate
             )
         }.getOrNull()
+    }
+
+    private fun cleanMarkdown(raw: String): String {
+        if (raw.isBlank()) return ""
+        return raw.lines()
+            .map { line ->
+                var t = line.trim()
+                t = t.replace(Regex("^#{1,6}\\s*"), "")
+                t = t.replace(Regex("^[-*]\\s+"), "• ")
+                t = t.replace("**", "").replace("__", "").replace("`", "")
+                t
+            }
+            .filter { it.isNotBlank() }
+            .joinToString("\n")
     }
 
     private fun isNewerVersion(latest: String, current: String): Boolean {
@@ -123,6 +161,11 @@ fun UpdateAvailableBanner(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val metaParts = buildList {
+        add("${info.currentVersion} -> ${info.latestVersion}")
+        if (info.apkSizeLabel.isNotBlank()) add(info.apkSizeLabel)
+        if (info.publishedDate.isNotBlank()) add(info.publishedDate)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -158,7 +201,7 @@ fun UpdateAvailableBanner(
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "Terpasang ${info.currentVersion} -> ${info.latestVersion} (Install langsung tanpa uninstall)",
+                    text = metaParts.joinToString(" • "),
                     color = TextSecondary,
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace
@@ -166,28 +209,49 @@ fun UpdateAvailableBanner(
             }
         },
         text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 220.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFF1E293B).copy(alpha = 0.7f))
-                    .border(1.dp, Color(0xFF334155), RoundedCornerShape(12.dp))
-                    .padding(12.dp)
-                    .verticalScroll(rememberScrollState())
-            ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 210.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF1E293B).copy(alpha = 0.7f))
+                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(12.dp))
+                        .padding(12.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        text = "Apa yang baru:",
+                        color = accent,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = info.changelog,
+                        color = Color(0xFFE2E8F0),
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+
                 Text(
-                    text = "Apa yang baru:",
-                    color = accent,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = info.changelog,
-                    color = Color(0xFFE2E8F0),
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp
+                    text = "Lewati versi ${info.latestVersion} (jangan ingatkan lagi)",
+                    color = TextSecondary.copy(alpha = 0.85f),
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .clickable {
+                            Prefs.skippedUpdateVersion = info.latestVersion
+                            Toast.makeText(
+                                context,
+                                "Notifikasi ${info.latestVersion} dilewati",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            onDismiss()
+                        }
+                        .padding(vertical = 2.dp)
                 )
             }
         },
