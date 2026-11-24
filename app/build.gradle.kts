@@ -11,8 +11,8 @@ android {
         applicationId = "com.shin.framepulse"
         minSdk = 26
         targetSdk = 34
-        versionCode = 104
-        versionName = "1.1.2"
+        versionCode = 105
+        versionName = "1.2.0"
     }
 
     signingConfigs {
