@@ -1,4 +1,4 @@
-name: Generate TikTok Promo Slides
+name: Generate TikTok Promo Slides & Video
 
 on:
   workflow_dispatch:
@@ -18,17 +18,37 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install Pillow & Fonts
+      - name: Install Pillow, Fonts & FFmpeg
         run: |
-          sudo apt-get update && sudo apt-get install -y fonts-dejavu-core fonts-liberation
+          sudo apt-get update && sudo apt-get install -y fonts-dejavu-core fonts-liberation ffmpeg
           pip install pillow
       - name: Render 5 TikTok Carousel PNGs
         env:
           APP_VERSION: ${{ github.event.inputs.app_version || github.event.release.tag_name || 'v1.1.0' }}
           OUT_DIR: promo_slides
         run: python scripts/generate_slides.py
-      - name: Upload Slides Artifact
+      - name: Render Animated TikTok Video (MP4)
+        run: |
+          ffmpeg -y \
+            -loop 1 -t 3.5 -framerate 30 -i promo_slides/slide_1.png \
+            -loop 1 -t 3.5 -framerate 30 -i promo_slides/slide_2.png \
+            -loop 1 -t 3.5 -framerate 30 -i promo_slides/slide_3.png \
+            -loop 1 -t 3.5 -framerate 30 -i promo_slides/slide_4.png \
+            -loop 1 -t 3.5 -framerate 30 -i promo_slides/slide_5.png \
+            -filter_complex "\
+              [0:v]format=yuv420p,setsar=1[v0]; \
+              [1:v]format=yuv420p,setsar=1[v1]; \
+              [2:v]format=yuv420p,setsar=1[v2]; \
+              [3:v]format=yuv420p,setsar=1[v3]; \
+              [4:v]format=yuv420p,setsar=1[v4]; \
+              [v0][v1]xfade=transition=slideleft:duration=0.5:offset=3.0[x1]; \
+              [x1][v2]xfade=transition=slideleft:duration=0.5:offset=6.0[x2]; \
+              [x2][v3]xfade=transition=slideleft:duration=0.5:offset=9.0[x3]; \
+              [x3][v4]xfade=transition=slideleft:duration=0.5:offset=12.0[vout]" \
+            -map "[vout]" -c:v libx264 -pix_fmt yuv420p -r 30 -movflags +faststart \
+            promo_slides/framepulse_promo.mp4
+      - name: Upload Slides & Video Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: framepulse-tiktok-slides-${{ github.event.inputs.app_version || github.event.release.tag_name || 'v1.1.0' }}
-          path: promo_slides/*.png
+          name: framepulse-tiktok-kit-${{ github.event.inputs.app_version || github.event.release.tag_name || 'v1.1.0' }}
+          path: promo_slides/*
