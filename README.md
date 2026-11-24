@@ -108,3 +108,12 @@ APK dibangun langsung oleh <strong>GitHub Actions</strong> dari source code di r
 ## Lisensi
 
 Hak Cipta © 2026 **Shin ([@hinaaaq](https://github.com/hinaaaq))**. Lihat file [LICENSE](LICENSE) untuk detail lisensi dan [SECURITY.md](SECURITY.md) untuk kebijakan keamanan.
+
+## Tampilan & Hasil Benchmark Nyata
+
+Contoh keluaran **Verified Flex Card** hasil rekaman sesi benchmark nyata pada perangkat **Samsung Galaxy A24 (`SM-A245F`)**:
+
+- **87 FPS** rata-rata dengan **1% Low: 83 FPS** dan suhu puncak **38°C** pada sesi rekaman 17 detik (*Valorant Mobile*).
+- Terverifikasi tanpa input skor manual dan siap dibagikan langsung ke komunitas maupun **Global Leaderboard**.
+
+> Simpan tangkapan layar tambahan (tab Monitor, HUD melayang, atau HUD Studio) ke `docs/screenshots/` dan perbarui tautannya sesuai nama file di repositori Anda.
