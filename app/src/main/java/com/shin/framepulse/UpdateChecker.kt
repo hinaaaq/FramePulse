@@ -6,18 +6,23 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,7 +42,8 @@ import java.net.URL
 data class AppUpdateInfo(
     val latestVersion: String,
     val currentVersion: String,
-    val downloadUrl: String
+    val downloadUrl: String,
+    val changelog: String = ""
 )
 
 object UpdateChecker {
@@ -84,10 +90,14 @@ object UpdateChecker {
                 }
             }
 
+            val notes = json.optString("body", "").trim()
+                .ifBlank { "Perbaikan performa, stabilitas, dan dukungan perangkat terbaru." }
+
             AppUpdateInfo(
                 latestVersion = "v$latestClean",
                 currentVersion = "v$currentClean",
-                downloadUrl = apkUrl
+                downloadUrl = apkUrl,
+                changelog = notes
             )
         }.getOrNull()
     }
@@ -113,44 +123,84 @@ fun UpdateAvailableBanner(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(accent.copy(alpha = 0.12f))
-            .border(1.dp, accent.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "Update Tersedia: ${info.latestVersion}",
-                color = TextPrimary,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 12.5.sp
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = "Terpasang ${info.currentVersion} • Install langsung tanpa uninstall",
-                color = TextSecondary,
-                fontSize = 10.5.sp,
-                fontFamily = FontFamily.Monospace
-            )
-        }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Nanti",
-                color = TextSecondary,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF0F172A),
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Update Tersedia",
+                        color = TextPrimary,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 18.sp
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(accent.copy(alpha = 0.16f))
+                            .border(1.dp, accent.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = info.latestVersion,
+                            color = accent,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Terpasang ${info.currentVersion} -> ${info.latestVersion} (Install langsung tanpa uninstall)",
+                    color = TextSecondary,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        },
+        text = {
+            Column(
                 modifier = Modifier
-                    .clickable { onDismiss() }
-                    .padding(horizontal = 4.dp, vertical = 6.dp)
-            )
+                    .fillMaxWidth()
+                    .heightIn(max = 220.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFF1E293B).copy(alpha = 0.7f))
+                    .border(1.dp, Color(0xFF334155), RoundedCornerShape(12.dp))
+                    .padding(12.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    text = "Apa yang baru:",
+                    color = accent,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = info.changelog,
+                    color = Color(0xFFE2E8F0),
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(
+                    text = "Nanti",
+                    color = TextSecondary,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        },
+        confirmButton = {
             Button(
                 onClick = {
                     runCatching {
@@ -158,17 +208,18 @@ fun UpdateAvailableBanner(
                     }.onFailure {
                         Toast.makeText(context, "Gagal membuka browser", Toast.LENGTH_SHORT).show()
                     }
+                    onDismiss()
                 },
-                shape = RoundedCornerShape(9.dp),
+                shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = accent)
             ) {
                 Text(
-                    text = "Update",
+                    text = "Download APK",
                     color = Color.Black,
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 11.sp
+                    fontSize = 12.sp
                 )
             }
         }
-    }
+    )
 }

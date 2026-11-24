@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/hinaaaq/FramePulse/releases/latest"><strong>⬇ Download APK v1.0.1 Stable</strong></a>
+  <a href="https://github.com/hinaaaq/FramePulse/releases/latest"><strong>⬇ Download Latest APK (Free)</strong></a>
   &nbsp;·&nbsp;
   <a href="#device-capabilities">Capabilities</a>
   &nbsp;·&nbsp;
