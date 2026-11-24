@@ -227,4 +227,12 @@ object Prefs {
     var lockedRefreshRateHz: Int
         get() = sp().getInt("locked_refresh_rate_hz", 0)
         set(v) = sp().edit().putInt("locked_refresh_rate_hz", v).apply()
+
+    var hasChosenLanguage: Boolean
+        get() = sp().getBoolean("has_chosen_language", false)
+        set(v) = sp().edit().putBoolean("has_chosen_language", v).apply()
+
+    var lastSeenVersionName: String
+        get() = sp().getString("last_seen_version_name", "") ?: ""
+        set(v) = sp().edit().putString("last_seen_version_name", v).apply()
 }

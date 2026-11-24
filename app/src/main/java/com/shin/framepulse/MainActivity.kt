@@ -159,11 +159,32 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
     val str = remember(langPref) { AppStrings.forLang(langPref) }
 
     var proStatus by remember { mutableStateOf(ProLicenseManager.getStatus(forceRefresh = true)) }
+    val isId = langPref.equals("id", ignoreCase = true)
+    val currentAppVersion = remember {
+        runCatching {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0.0"
+        }.getOrDefault("1.0.0")
+    }
+    var hasChosenLang by remember { mutableStateOf(Prefs.hasChosenLanguage || Prefs.hasSeenWelcome) }
+    if (!hasChosenLang) {
+        FirstLaunchLanguageScreen(
+            onSelectLanguage = { chosen ->
+                Prefs.appLanguage = chosen
+                Prefs.hasChosenLanguage = true
+                langPref = chosen
+                hasChosenLang = true
+            }
+        )
+        return
+    }
     var showWelcome by remember { mutableStateOf(!Prefs.hasSeenWelcome) }
     if (showWelcome) {
         WelcomeOnboardingScreen(
             onFinish = {
                 Prefs.hasSeenWelcome = true
+                Prefs.hasChosenLanguage = true
+                Prefs.lastSeenVersionName = currentAppVersion
                 proStatus = ProLicenseManager.getStatus(forceRefresh = true)
                 showWelcome = false
             }
@@ -172,6 +193,19 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
     }
     val isPro = proStatus.isPro
     var showProDialog by remember { mutableStateOf(false) }
+    var showWhatsNew by remember {
+        mutableStateOf(Prefs.hasSeenWelcome && Prefs.lastSeenVersionName != currentAppVersion)
+    }
+    if (showWhatsNew) {
+        WhatsNewUpdateDialog(
+            versionName = currentAppVersion,
+            isId = isId,
+            onDismiss = {
+                Prefs.lastSeenVersionName = currentAppVersion
+                showWhatsNew = false
+            }
+        )
+    }
     var availableUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
     val updateCheckScope = rememberCoroutineScope()
     var isCheckingUpdate by remember { mutableStateOf(false) }
@@ -862,7 +896,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(10.dp)
                         ) {
-                            Text("Salin Ringkasan Benchmark (Share)", color = activeAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(if (isId) "Salin Ringkasan Benchmark (Share)" else "Copy Benchmark Summary (Share)", color = activeAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                         val adv = BenchmarkExporter.computeMetrics(latestRes, TelemetryHub.fpsHistory.toList())
                         Spacer(modifier = Modifier.height(6.dp))
@@ -896,7 +930,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(10.dp)
                             ) {
-                                Text("Simpan Card PNG", color = CyberCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text(if (isId) "Simpan Card PNG" else "Save PNG Card", color = CyberCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -1665,7 +1699,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 if (found != null) {
                                     availableUpdate = found
                                 } else {
-                                    Toast.makeText(context, "FramePulse sudah versi terbaru!", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, if (isId) "FramePulse sudah versi terbaru!" else "FramePulse is up to date!", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
@@ -1674,7 +1708,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     shape = RoundedCornerShape(10.dp)
                 ) {
                     Text(
-                        text = if (isCheckingUpdate) "Mengecek Update..." else "Cek Update Sekarang",
+                        text = if (isCheckingUpdate) if (isId) "Mengecek Update..." else "Checking Update..." else if (isId) "Cek Update Sekarang" else "Check for Updates",
                         color = EmeraldNeon,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
@@ -1703,7 +1737,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(10.dp)
                     ) {
-                        Text("Reset Posisi HUD", color = AmberVolt, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text(if (isId) "Reset Posisi HUD" else "Reset HUD Position", color = AmberVolt, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
@@ -1719,7 +1753,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     shape = RoundedCornerShape(10.dp)
                 ) {
                     Text(
-                        text = if (autoShowGames) "Auto-Show HUD Khusus Game: AKTIF" else "Auto-Show HUD Khusus Game: NONAKTIF",
+                        text = if (autoShowGames) if (isId) "Auto-Show HUD Khusus Game: AKTIF" else "Game-Only Auto-Show HUD: ON" else if (isId) "Auto-Show HUD Khusus Game: NONAKTIF" else "Game-Only Auto-Show HUD: OFF",
                         color = if (autoShowGames) EmeraldNeon else TextSecondary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
@@ -1757,7 +1791,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text(if (thermalWarn) "Thermal Warning HUD (>=42°C): AKTIF" else "Thermal Warning HUD: NONAKTIF", color = if (thermalWarn) EmeraldNeon else TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text(if (thermalWarn) if (isId) "Thermal Warning HUD (>=42°C): AKTIF" else "HUD Thermal Warning (>=42°C): ON" else if (isId) "Thermal Warning HUD: NONAKTIF" else "HUD Thermal Warning: OFF", color = if (thermalWarn) EmeraldNeon else TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 OutlinedButton(
@@ -1772,7 +1806,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text(if (visualMode) "Gaming Visual (Blur OFF / 0.5x): AKTIF" else "Gaming Visual (Blur OFF / 0.5x): OFF", color = if (visualMode) EmeraldNeon else TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text(if (visualMode) if (isId) "Gaming Visual (Blur OFF / 0.5x): AKTIF" else "Gaming Visual (Blur OFF / 0.5x): ON" else "Gaming Visual (Blur OFF / 0.5x): OFF", color = if (visualMode) EmeraldNeon else TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {

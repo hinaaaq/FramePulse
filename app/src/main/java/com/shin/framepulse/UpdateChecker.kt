@@ -111,9 +111,14 @@ object UpdateChecker {
             val publishedRaw = json.optString("published_at", "").trim()
             val publishedDate = if (publishedRaw.length >= 10) publishedRaw.substring(0, 10) else ""
 
+            val isId = Prefs.hasChosenLanguage && Prefs.appLanguage.equals("id", ignoreCase = true)
+            val fallbackNotes = if (isId) {
+                "Perbaikan performa, stabilitas, dan dukungan perangkat terbaru."
+            } else {
+                "Performance improvements, stability fixes, and latest device support."
+            }
             val rawNotes = json.optString("body", "").trim()
-            val cleanedNotes = cleanMarkdown(rawNotes)
-                .ifBlank { "Perbaikan performa, stabilitas, dan dukungan perangkat terbaru." }
+            val cleanedNotes = cleanMarkdown(rawNotes).ifBlank { fallbackNotes }
 
             AppUpdateInfo(
                 latestVersion = latestLabel,
@@ -161,6 +166,7 @@ fun UpdateAvailableBanner(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val isId = Prefs.hasChosenLanguage && Prefs.appLanguage.equals("id", ignoreCase = true)
     val metaParts = buildList {
         add("${info.currentVersion} -> ${info.latestVersion}")
         if (info.apkSizeLabel.isNotBlank()) add(info.apkSizeLabel)
@@ -178,7 +184,7 @@ fun UpdateAvailableBanner(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "Update Tersedia",
+                        text = if (isId) "Update Tersedia" else "Update Available",
                         color = TextPrimary,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 18.sp
@@ -221,7 +227,7 @@ fun UpdateAvailableBanner(
                         .verticalScroll(rememberScrollState())
                 ) {
                     Text(
-                        text = "Apa yang baru:",
+                        text = if (isId) "Apa yang baru:" else "What's new:",
                         color = accent,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp
@@ -238,7 +244,7 @@ fun UpdateAvailableBanner(
                 Spacer(Modifier.height(10.dp))
 
                 Text(
-                    text = "Lewati versi ${info.latestVersion} (jangan ingatkan lagi)",
+                    text = if (isId) "Lewati versi ${info.latestVersion} (jangan ingatkan lagi)" else "Skip ${info.latestVersion} (don't remind again)",
                     color = TextSecondary.copy(alpha = 0.85f),
                     fontSize = 11.sp,
                     modifier = Modifier
@@ -246,7 +252,7 @@ fun UpdateAvailableBanner(
                             Prefs.skippedUpdateVersion = info.latestVersion
                             Toast.makeText(
                                 context,
-                                "Notifikasi ${info.latestVersion} dilewati",
+                                if (isId) "Notifikasi ${info.latestVersion} dilewati" else "Skipped ${info.latestVersion} update",
                                 Toast.LENGTH_SHORT
                             ).show()
                             onDismiss()
@@ -258,7 +264,7 @@ fun UpdateAvailableBanner(
         dismissButton = {
             TextButton(onClick = onDismiss) {
                 Text(
-                    text = "Nanti",
+                    text = if (isId) "Nanti" else "Later",
                     color = TextSecondary,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -270,7 +276,11 @@ fun UpdateAvailableBanner(
                     runCatching {
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl)))
                     }.onFailure {
-                        Toast.makeText(context, "Gagal membuka browser", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            context,
+                            if (isId) "Gagal membuka browser" else "Failed to open browser",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
                     onDismiss()
                 },
