@@ -203,4 +203,8 @@ object Prefs {
     var lastCloudSyncMs: Long
         get() = sp().getLong("last_cloud_sync_ms", 0L)
         set(v) = sp().edit().putLong("last_cloud_sync_ms", v).apply()
+
+    var hasSeenWelcome: Boolean
+        get() = sp().getBoolean("has_seen_welcome", false)
+        set(v) = sp().edit().putBoolean("has_seen_welcome", v).apply()
 }

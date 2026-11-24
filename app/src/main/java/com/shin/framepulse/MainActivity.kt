@@ -158,6 +158,17 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
     val str = remember(langPref) { AppStrings.forLang(langPref) }
 
     var proStatus by remember { mutableStateOf(ProLicenseManager.getStatus(forceRefresh = true)) }
+    var showWelcome by remember { mutableStateOf(!Prefs.hasSeenWelcome) }
+    if (showWelcome) {
+        WelcomeOnboardingScreen(
+            onFinish = {
+                Prefs.hasSeenWelcome = true
+                proStatus = ProLicenseManager.getStatus(forceRefresh = true)
+                showWelcome = false
+            }
+        )
+        return
+    }
     val isPro = proStatus.isPro
     var showProDialog by remember { mutableStateOf(false) }
     var availableUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
