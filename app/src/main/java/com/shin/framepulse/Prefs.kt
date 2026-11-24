@@ -215,4 +215,16 @@ object Prefs {
     var autoShowHudInGames: Boolean
         get() = sp().getBoolean("auto_show_hud_in_games", false)
         set(v) = sp().edit().putBoolean("auto_show_hud_in_games", v).apply()
+
+    var thermalWarningEnabled: Boolean
+        get() = sp().getBoolean("thermal_warning_enabled", true)
+        set(v) = sp().edit().putBoolean("thermal_warning_enabled", v).apply()
+
+    var gamingVisualMode: Boolean
+        get() = sp().getBoolean("gaming_visual_mode", false)
+        set(v) = sp().edit().putBoolean("gaming_visual_mode", v).apply()
+
+    var lockedRefreshRateHz: Int
+        get() = sp().getInt("locked_refresh_rate_hz", 0)
+        set(v) = sp().edit().putInt("locked_refresh_rate_hz", v).apply()
 }

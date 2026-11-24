@@ -1740,6 +1740,90 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                             Prefs.appLanguage = code
                                             pushOverlayUpdate()
                                         }
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("SHIZUKU PRO TWEAKS (NON-ROOT)", color = CyberCyan, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                Spacer(modifier = Modifier.height(6.dp))
+                val tweakScope = rememberCoroutineScope()
+                var thermalWarn by remember { mutableStateOf(Prefs.thermalWarningEnabled) }
+                var visualMode by remember { mutableStateOf(Prefs.gamingVisualMode) }
+                var lockedHz by remember { mutableStateOf(Prefs.lockedRefreshRateHz) }
+                var isCompilingArt by remember { mutableStateOf(false) }
+                OutlinedButton(
+                    onClick = {
+                        thermalWarn = !thermalWarn
+                        Prefs.thermalWarningEnabled = thermalWarn
+                        Toast.makeText(context, if (thermalWarn) "Thermal Warning (>=42°C) AKTIF" else "Thermal Warning NONAKTIF", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text(if (thermalWarn) "Thermal Warning HUD (>=42°C): AKTIF" else "Thermal Warning HUD: NONAKTIF", color = if (thermalWarn) EmeraldNeon else TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                OutlinedButton(
+                    onClick = {
+                        val next = !visualMode
+                        tweakScope.launch {
+                            val msg = withContext(Dispatchers.IO) { ShizukuPerformanceTweaks.setGamingVisualMode(next) }
+                            visualMode = Prefs.gamingVisualMode
+                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text(if (visualMode) "Gaming Visual (Blur OFF / 0.5x): AKTIF" else "Gaming Visual (Blur OFF / 0.5x): OFF", color = if (visualMode) EmeraldNeon else TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(0 to "Hz: Auto", 60 to "60Hz", 90 to "90Hz").forEach { (hz, lbl) ->
+                        OutlinedButton(
+                            onClick = {
+                                tweakScope.launch {
+                                    val msg = withContext(Dispatchers.IO) { ShizukuPerformanceTweaks.applyRefreshRateLock(hz) }
+                                    lockedHz = Prefs.lockedRefreshRateHz
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text(lbl, color = if (lockedHz == hz) CyberCyan else TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            tweakScope.launch {
+                                val msg = withContext(Dispatchers.IO) { ShizukuPerformanceTweaks.applySmartStandbyBucket(Prefs.lastGamePackage) }
+                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Smart Standby", color = EmeraldNeon, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            if (!isCompilingArt) {
+                                isCompilingArt = true
+                                Toast.makeText(context, "Menjalankan Deep ART Compile...", Toast.LENGTH_SHORT).show()
+                                tweakScope.launch {
+                                    val msg = withContext(Dispatchers.IO) { ShizukuPerformanceTweaks.runDeepArtCompileAndTrim(Prefs.lastGamePackage) }
+                                    isCompilingArt = false
+                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(if (isCompilingArt) "Compiling..." else "Deep ART Game", color = CyberCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
                                     }
                                 }
                             }

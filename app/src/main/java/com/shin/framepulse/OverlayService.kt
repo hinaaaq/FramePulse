@@ -955,6 +955,8 @@ class OverlayService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    private var lastThermalWarnMs = 0L
+    private var thermalPulseToggle = false
     private var autoVisStarted = false
     private fun startAutoVisibilityWatcher() {
         if (autoVisStarted) return
@@ -972,6 +974,18 @@ class OverlayService : Service() {
                     }
                 }
                 mainHandler.postDelayed(this, 1000L)
+                if (Prefs.thermalWarningEnabled && TelemetryHub.latest.batteryTempC >= 42.0f) {
+                    thermalPulseToggle = !thermalPulseToggle
+                    rootContainer?.alpha = if (thermalPulseToggle) 0.72f else 1.0f
+                    val nowMs = System.currentTimeMillis()
+                    if (nowMs - lastThermalWarnMs > 60_000L) {
+                        lastThermalWarnMs = nowMs
+                        val tStr = String.format(java.util.Locale.US, "%.1f", TelemetryHub.latest.batteryTempC)
+                        android.widget.Toast.makeText(this@OverlayService, "Peringatan Suhu: ${tStr}°C! Hindari throttling", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                } else if (rootContainer?.alpha != 1.0f) {
+                    rootContainer?.alpha = 1.0f
+                }
             }
         }
         mainHandler.postDelayed(r, 1000L)
