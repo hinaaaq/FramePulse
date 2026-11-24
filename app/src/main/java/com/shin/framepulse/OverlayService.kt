@@ -959,7 +959,6 @@ class OverlayService : Service() {
     private fun startAutoVisibilityWatcher() {
         if (autoVisStarted) return
         autoVisStarted = true
-        val h = android.os.Handler(android.os.Looper.getMainLooper())
         val r = object : Runnable {
             override fun run() {
                 if (!isRunning) { autoVisStarted = false; return }
@@ -972,9 +971,9 @@ class OverlayService : Service() {
                         container.visibility = View.VISIBLE
                     }
                 }
-                h.postDelayed(this, 1000L)
+                mainHandler.postDelayed(this, 1000L)
             }
         }
-        h.postDelayed(r, 1000L)
+        mainHandler.postDelayed(r, 1000L)
     }
 }

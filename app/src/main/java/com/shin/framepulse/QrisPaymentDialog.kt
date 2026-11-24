@@ -162,7 +162,7 @@ fun QrisPaymentDialog(
                         Text("Membuat QRIS...", color = Color(0xFFCBD5E1), fontSize = 12.sp)
                     }
                     errorMsg != null -> {
-                        Text(errorMsg!!, color = Color(0xFFF87171), fontSize = 12.sp)
+                        Text(errorMsg.orEmpty(), color = Color(0xFFF87171), fontSize = 12.sp)
                     }
                     qrBitmap != null -> {
                         Box(
