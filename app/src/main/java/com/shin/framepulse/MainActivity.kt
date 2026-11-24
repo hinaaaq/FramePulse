@@ -373,7 +373,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 val badgeCol = if (isPro) activeAccent else AmberVolt
                                 val badgeTxt = when {
                                     proStatus.tierLabel == "OWNER" -> "OWNER"
-                                    proStatus.state == LicenseState.PRO_ACTIVE -> "PRO"
+                                    proStatus.state == LicenseState.PRO_ACTIVE -> "SUPPORTER"
                                     proStatus.state == LicenseState.TRIAL_ACTIVE -> "TRIAL"
                                     else -> "FREE • PRO"
                                 }
@@ -1576,7 +1576,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
 
                     item {
                         CyberCard {
-                            SectionTitle(str.setupTileTitle, "PRO", CyberCyan)
+                            SectionTitle(str.setupTileTitle, "FREE", CyberCyan)
                             Text(text = str.setupTileDesc, color = TextSecondary, fontSize = 12.sp)
                         }
                     }

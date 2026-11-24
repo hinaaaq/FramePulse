@@ -263,7 +263,7 @@ fun ProTagPill(modifier: Modifier = Modifier) {
             .padding(horizontal = 4.dp, vertical = 0.5.dp)
     ) {
         Text(
-            text = "PRO",
+            text = "SUP",
             color = AmberVolt,
             fontSize = 7.5.sp,
             fontWeight = FontWeight.Black,

@@ -334,7 +334,7 @@ fun ThemePickerDialog(
                                                 .background(Color(0xFF10B981))
                                                 .padding(horizontal = 4.dp, vertical = 1.dp)
                                         ) {
-                                            Text("PRO", color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 8.5.sp)
+                                            Text("SUP", color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 8.5.sp)
                                         }
                                     }
                                 }

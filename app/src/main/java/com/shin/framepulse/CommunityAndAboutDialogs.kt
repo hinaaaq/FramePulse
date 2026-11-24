@@ -607,7 +607,7 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
                                                     .background(Color(0xFF10B981))
                                                     .padding(horizontal = 4.dp, vertical = 1.dp)
                                             ) {
-                                                Text("PRO", color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 9.sp)
+                                                Text("SUPPORTER", color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 9.sp)
                                             }
                                         }
                                     }
