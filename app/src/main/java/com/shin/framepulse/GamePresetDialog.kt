@@ -61,6 +61,7 @@ fun GamePresetDialog(isPro: Boolean, onDismiss: () -> Unit) {
                                             busyId = preset.id
                                             scope.launch {
                                                 val (_, msg) = withContext(Dispatchers.IO) { GameBooster.applyGamePreset(preset) }
+                        com.shin.framepulse.v110.FramePulseV110Bridge(context).selectGameProfile(preset.name)
                                                 busyId = null
                                                 Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                                             }

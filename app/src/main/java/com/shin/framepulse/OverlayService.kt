@@ -189,6 +189,8 @@ class OverlayService : Service() {
                 if (isRunning) {
                     lastRenderedHash = 0
                     applyVisualConfig()
+                val v110Density = if (Prefs.layoutMode == Prefs.LAYOUT_MINI) com.shin.framepulse.hud.HudDensityMode.COMPACT else com.shin.framepulse.hud.HudDensityMode.DETAILED
+                com.shin.framepulse.v110.FramePulseV110Bridge(this).updateHudDensity(v110Density)
                     lastTelemetry?.let { renderTelemetry(it) }
                     return START_STICKY
                 }
@@ -367,6 +369,21 @@ class OverlayService : Service() {
         ) {
             if (TelemetryHub.isRecording) {
                 TelemetryHub.stopRecording()
+                val hist = synchronized(TelemetryHub.fpsHistory) { TelemetryHub.fpsHistory.toList() }.map { it.toFloat() }
+                val avgFps = if (hist.isNotEmpty()) hist.average().toFloat() else (lastTelemetry?.fps?.toFloat() ?: 0f)
+                val low1 = if (hist.isNotEmpty()) { val s = hist.sorted(); s[(s.size * 0.01).toInt().coerceIn(0, s.lastIndex)] } else avgFps
+                val peakTemp = lastTelemetry?.batteryTempC ?: 0f
+                com.shin.framepulse.v110.FramePulseV110Bridge(this).recordCompletedSession(
+                    sessionId = "rec_${System.currentTimeMillis()}",
+                    timestampMs = System.currentTimeMillis(),
+                    gameOrLabel = "",
+                    durationSec = hist.size,
+                    avgFps = avgFps,
+                    low1PercentFps = low1,
+                    peakTempC = peakTemp,
+                    thermalThrottleDetected = peakTemp >= 42f,
+                    verified = lastTelemetry?.isTrueGameFps ?: false
+                )
                 recBtnView?.text = "REC"
             } else {
                 TelemetryHub.startRecording()
