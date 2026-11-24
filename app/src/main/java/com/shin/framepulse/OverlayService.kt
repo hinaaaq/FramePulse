@@ -493,14 +493,15 @@ class OverlayService : Service() {
                     } else {
                         val nowTap = System.currentTimeMillis()
                         if (nowTap - lastTapTimeMs < 320L) {
+                            rootContainer?.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
                             lastTapTimeMs = 0L
                             if (Prefs.layoutMode == Prefs.LAYOUT_MINI) {
                                 Prefs.layoutMode = preMiniLayout
-                                android.widget.Toast.makeText(this, "HUD: Mode Lengkap", android.widget.Toast.LENGTH_SHORT).show()
+                                android.widget.Toast.makeText(this, if (Prefs.hasChosenLanguage && Prefs.appLanguage.equals("id", ignoreCase = true)) "HUD: Mode Lengkap" else "HUD: Full Mode", android.widget.Toast.LENGTH_SHORT).show()
                             } else {
                                 preMiniLayout = Prefs.layoutMode
                                 Prefs.layoutMode = Prefs.LAYOUT_MINI
-                                android.widget.Toast.makeText(this, "HUD: Mode Mini (Double-Tap)", android.widget.Toast.LENGTH_SHORT).show()
+                                android.widget.Toast.makeText(this, if (Prefs.hasChosenLanguage && Prefs.appLanguage.equals("id", ignoreCase = true)) "HUD: Mode Mini (Double-Tap)" else "HUD: Mini Mode (Double-Tap)", android.widget.Toast.LENGTH_SHORT).show()
                             }
                             val upd = android.content.Intent(this, OverlayService::class.java).apply { action = ACTION_UPDATE_CONFIG }
                             startService(upd)
@@ -981,7 +982,7 @@ class OverlayService : Service() {
                     if (nowMs - lastThermalWarnMs > 60_000L) {
                         lastThermalWarnMs = nowMs
                         val tStr = String.format(java.util.Locale.US, "%.1f", TelemetryHub.latest.batteryTempC)
-                        android.widget.Toast.makeText(this@OverlayService, "Peringatan Suhu: ${tStr}°C! Hindari throttling", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(this@OverlayService, if (Prefs.hasChosenLanguage && Prefs.appLanguage.equals("id", ignoreCase = true)) "Peringatan Suhu: ${tStr}°C! Hindari throttling" else "Thermal Warning: ${tStr}°C! Watch for throttling", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 } else if (rootContainer?.alpha != 1.0f) {
                     rootContainer?.alpha = 1.0f

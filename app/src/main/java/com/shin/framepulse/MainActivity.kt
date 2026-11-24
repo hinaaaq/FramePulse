@@ -1,4 +1,5 @@
 package com.shin.framepulse
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.material3.OutlinedButton
 
 import android.Manifest
@@ -901,7 +902,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                         val adv = BenchmarkExporter.computeMetrics(latestRes, TelemetryHub.fpsHistory.toList())
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = String.format(Locale.US, "Frametime: %.1f ms • Stutter: %dx • Stabilitas: %d%%", adv.avgFrameTimeMs, adv.stutterCount, adv.stabilityPercent),
+                            text = String.format(Locale.US, if (isId) "Frametime: %.1f ms • Stutter: %dx • Stabilitas: %d%%" else "Frametime: %.1f ms • Stutter: %dx • Stability: %d%%", adv.avgFrameTimeMs, adv.stutterCount, adv.stabilityPercent),
                             color = TextSecondary,
                             fontSize = 11.sp
                         )
@@ -913,7 +914,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             OutlinedButton(
                                 onClick = {
                                     val path = BenchmarkExporter.exportCsv(context, latestRes, TelemetryHub.fpsHistory.toList())
-                                    val msg = if (path != null) "CSV tersimpan: $path" else "Gagal menyimpan CSV"
+                                    val msg = if (path != null) if (isId) "CSV tersimpan: $path" else "CSV saved: $path" else if (isId) "Gagal menyimpan CSV" else "Failed to save CSV"
                                     Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                                 },
                                 modifier = Modifier.weight(1f),
@@ -924,7 +925,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                             OutlinedButton(
                                 onClick = {
                                     val path = BenchmarkExporter.exportPngCard(context, latestRes, TelemetryHub.fpsHistory.toList())
-                                    val msg = if (path != null) "Card PNG tersimpan di Galeri!" else "Gagal membuat Card PNG"
+                                    val msg = if (path != null) if (isId) "Card PNG tersimpan di Galeri!" else "PNG Card saved to Gallery!" else if (isId) "Gagal membuat Card PNG" else "Failed to create PNG Card"
                                     Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                                 },
                                 modifier = Modifier.weight(1f),
@@ -1746,7 +1747,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     onClick = {
                         autoShowGames = !autoShowGames
                         Prefs.autoShowHudInGames = autoShowGames
-                        val msg = if (autoShowGames) "Auto-Show aktif: HUD otomatis sembunyi di Home" else "Auto-Show nonaktif: HUD selalu tampil"
+                        val msg = if (autoShowGames) if (isId) "Auto-Show aktif: HUD otomatis sembunyi di Home" else "Auto-Show ON: HUD hides on Home screen" else if (isId) "Auto-Show nonaktif: HUD selalu tampil" else "Auto-Show OFF: HUD always visible"
                         Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -1778,6 +1779,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                 Text("SHIZUKU PRO TWEAKS (NON-ROOT)", color = CyberCyan, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
                 Spacer(modifier = Modifier.height(6.dp))
                 val tweakScope = rememberCoroutineScope()
+                val hapticView = LocalView.current
                 var thermalWarn by remember { mutableStateOf(Prefs.thermalWarningEnabled) }
                 var visualMode by remember { mutableStateOf(Prefs.gamingVisualMode) }
                 var lockedHz by remember { mutableStateOf(Prefs.lockedRefreshRateHz) }
@@ -1786,7 +1788,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     onClick = {
                         thermalWarn = !thermalWarn
                         Prefs.thermalWarningEnabled = thermalWarn
-                        Toast.makeText(context, if (thermalWarn) "Thermal Warning (>=42°C) AKTIF" else "Thermal Warning NONAKTIF", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, if (thermalWarn) if (isId) "Thermal Warning (>=42°C) AKTIF" else "Thermal Warning (>=42°C) ON" else if (isId) "Thermal Warning NONAKTIF" else "Thermal Warning OFF", Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp)
@@ -1844,7 +1846,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                         onClick = {
                             if (!isCompilingArt) {
                                 isCompilingArt = true
-                                Toast.makeText(context, "Menjalankan Deep ART Compile...", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, if (isId) "Menjalankan Deep ART Compile..." else "Running Deep ART Compile...", Toast.LENGTH_SHORT).show()
                                 tweakScope.launch {
                                     val msg = withContext(Dispatchers.IO) { ShizukuPerformanceTweaks.runDeepArtCompileAndTrim(Prefs.lastGamePackage) }
                                     isCompilingArt = false
@@ -1858,6 +1860,52 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                         Text(if (isCompilingArt) "Compiling..." else "Deep ART Game", color = CyberCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            hapticView.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                            if (!ShizukuPerformanceTweaks.isShizukuReady()) {
+                                Toast.makeText(context, ShizukuPerformanceTweaks.openShizuku(context), Toast.LENGTH_SHORT).show()
+                            } else {
+                                tweakScope.launch {
+                                    val msg = withContext(Dispatchers.IO) { ShizukuPerformanceTweaks.resetAllTweaks() }
+                                    visualMode = Prefs.gamingVisualMode
+                                    lockedHz = Prefs.lockedRefreshRateHz
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(if (isId) "Pulihkan Tweak" else "Reset Tweaks", color = Color(0xFFF59E0B), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            hapticView.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                            Toast.makeText(context, ShizukuPerformanceTweaks.openShizuku(context), Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(if (isId) "Buka Shizuku" else "Open Shizuku", color = CyberCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+                Text(
+                    text = "FramePulse v$currentAppVersion • Android ${android.os.Build.VERSION.RELEASE} • " + (if (isId) "Ketuk untuk What's New" else "Tap for What's New"),
+                    color = TextSecondary.copy(alpha = 0.75f),
+                    fontSize = 11.sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            hapticView.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                            showWhatsNew = true
+                        }
+                        .padding(vertical = 6.dp)
+                )
                                     }
                                 }
                             }
