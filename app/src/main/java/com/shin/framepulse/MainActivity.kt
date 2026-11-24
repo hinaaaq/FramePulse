@@ -842,6 +842,26 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                 }
                             }
 
+                    if (latestRes != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                val summary = String.format(
+                                    Locale.US,
+                                    "FramePulse Benchmark • Avg %.1f FPS | 1%% Low %d FPS",
+                                    latestRes.avgFps,
+                                    latestRes.onePercentLowFps
+                                )
+                                val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                cm.setPrimaryClip(android.content.ClipData.newPlainText("FramePulse Benchmark", summary))
+                                Toast.makeText(context, "Ringkasan benchmark disalin!", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Salin Ringkasan Benchmark (Share)", color = activeAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                             if (benchmarkHistory.size > 1) {
                                 Spacer(Modifier.height(12.dp))
                                 HorizontalDivider(color = CardBorder)
@@ -1596,6 +1616,32 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                         CyberCard {
                             SectionTitle(str.setupLangTitle, AppStrings.resolveLangCode(langPref).uppercase(Locale.US), activeAccent)
                             Text(text = str.setupLangDesc, color = TextSecondary, fontSize = 12.sp)
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { showWelcome = true },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Panduan Welcome", color = activeAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            Prefs.posX = 40
+                            Prefs.posY = 120
+                            Prefs.posXLand = 40
+                            Prefs.posYLand = 40
+                            Toast.makeText(context, "Posisi HUD direset ke default", Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Reset Posisi HUD", color = AmberVolt, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
                             Spacer(Modifier.height(10.dp))
                             AppStrings.supportedLanguages.chunked(3).forEachIndexed { rowIdx, rowItems ->
                                 if (rowIdx > 0) Spacer(Modifier.height(7.dp))
