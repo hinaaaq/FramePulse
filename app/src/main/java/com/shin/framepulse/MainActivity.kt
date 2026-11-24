@@ -1775,6 +1775,9 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                             Prefs.appLanguage = code
                                             pushOverlayUpdate()
                                         }
+                    )
+                }
+                // SHIZUKU_TWEAKS_CLOSE_FIX
                 Spacer(modifier = Modifier.height(12.dp))
                 Text("SHIZUKU PRO TWEAKS (NON-ROOT)", color = CyberCyan, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
                 Spacer(modifier = Modifier.height(6.dp))
@@ -1906,6 +1909,7 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                         }
                         .padding(vertical = 6.dp)
                 )
+                }
                                     }
                                 }
                             }
