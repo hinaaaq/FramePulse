@@ -526,6 +526,17 @@ class SystemMonitor(private val context: Context) {
         return dedup
     }
 
+    private fun normalizeLayerName(raw: String): String {
+        val t = raw.trim()
+        if (!t.startsWith("RequestedLayerState{")) return t
+        val inner = t.removePrefix("RequestedLayerState{").removeSuffix("}")
+        val cut = listOf(" parentId=", " z=", " layerStack=", " flags=")
+            .map { inner.indexOf(it) }
+            .filter { it > 0 }
+            .minOrNull()
+        return (if (cut != null) inner.substring(0, cut) else inner).trim()
+    }
+
     private fun isExcludedLayer(line: String): Boolean {
         val excluded = listOf(
             "Background for", "Bounds for", "Container", "RelativeParent",
@@ -544,7 +555,7 @@ class SystemMonitor(private val context: Context) {
         activeForegroundPkg = fgPkg
         TelemetryHub.activeForegroundPkg = fgPkg
         val allLayers = runShellCmd("dumpsys SurfaceFlinger --list")
-            .map { it.trim() }
+            .map { normalizeLayerName(it) }
             .filter { it.isNotEmpty() && !isExcludedLayer(it) }
         if (allLayers.isEmpty()) return null
 
@@ -612,13 +623,9 @@ class SystemMonitor(private val context: Context) {
             appendLine("CPU Source: ${TelemetryHub.latest.cpuSource} | GPU: ${TelemetryHub.latest.gpuLoadPercent ?: "N/A"}")
             appendLine("--- Focus ---")
             runShellCmd("dumpsys window displays | grep -E 'mCurrentFocus|mFocusedApp'").take(4).forEach { appendLine(it.trim()) }
-        appendLine("--- RAW SF --list ---")
-        runShellCmd("dumpsys SurfaceFlinger --list").take(10).forEach { appendLine(it) }
-        appendLine("--- RAW SF --layers ---")
-        runShellCmd("dumpsys SurfaceFlinger --layers").filter { it.contains("SurfaceView") || it.contains("BLAST") }.take(10).forEach { appendLine(it) }
             appendLine("--- SurfaceFlinger Layers (filtered) ---")
-            val layers = runShellCmd("dumpsys SurfaceFlinger --list")
-                .map { it.trim() }
+            val layers = runShellCmd("dumpsys SurfaceFlinger --list").map { normalizeLayerName(it) }
+                .map { normalizeLayerName(it) }
                 .filter { it.contains("SurfaceView") || it.contains("BLAST") || (fg != null && it.contains(fg)) }
             layers.takeLast(15).forEach { appendLine(it) }
             locked?.let { layer ->
