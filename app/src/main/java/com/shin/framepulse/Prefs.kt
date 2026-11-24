@@ -211,4 +211,8 @@ object Prefs {
     var skippedUpdateVersion: String
         get() = sp().getString("skipped_update_version", "") ?: ""
         set(v) = sp().edit().putString("skipped_update_version", v).apply()
+
+    var autoShowHudInGames: Boolean
+        get() = sp().getBoolean("auto_show_hud_in_games", false)
+        set(v) = sp().edit().putBoolean("auto_show_hud_in_games", v).apply()
 }

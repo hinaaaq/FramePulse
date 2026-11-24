@@ -449,6 +449,9 @@ class OverlayService : Service() {
         var initialY = 0
         var initialTouchX = 0f
         var initialTouchY = 0f
+        var lastTapTimeMs = 0L
+        var preMiniLayout = if (Prefs.layoutMode == Prefs.LAYOUT_MINI) Prefs.LAYOUT_HORIZONTAL else Prefs.layoutMode
+        startAutoVisibilityWatcher()
         var moved = false
 
         rootContainer?.setOnTouchListener { _, event ->
@@ -488,10 +491,26 @@ class OverlayService : Service() {
                         } catch (_: Exception) {
                         }
                     } else {
-                        Prefs.showQuickButtons = !Prefs.showQuickButtons
+                        val nowTap = System.currentTimeMillis()
+                        if (nowTap - lastTapTimeMs < 320L) {
+                            lastTapTimeMs = 0L
+                            if (Prefs.layoutMode == Prefs.LAYOUT_MINI) {
+                                Prefs.layoutMode = preMiniLayout
+                                android.widget.Toast.makeText(this, "HUD: Mode Lengkap", android.widget.Toast.LENGTH_SHORT).show()
+                            } else {
+                                preMiniLayout = Prefs.layoutMode
+                                Prefs.layoutMode = Prefs.LAYOUT_MINI
+                                android.widget.Toast.makeText(this, "HUD: Mode Mini (Double-Tap)", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                            val upd = android.content.Intent(this, OverlayService::class.java).apply { action = ACTION_UPDATE_CONFIG }
+                            startService(upd)
+                        } else {
+                            lastTapTimeMs = nowTap
+                            Prefs.showQuickButtons = !Prefs.showQuickButtons
                         recBtnView?.text = if (TelemetryHub.isRecording) "STOP" else "REC"
                         quickActionRow?.visibility =
                             if (Prefs.showQuickButtons && !isTouchLocked) View.VISIBLE else View.GONE
+                        }
                     }
                     true
                 }
@@ -653,6 +672,7 @@ class OverlayService : Service() {
         sparklineView?.visibility = if (allowGraph) View.VISIBLE else View.GONE
         quickActionRow?.visibility =
             if (Prefs.showQuickButtons && !isTouchLocked) View.VISIBLE else View.GONE
+                        }
 
         val land = isLandscape()
         layoutParams.x = Prefs.getPosX(land)
@@ -935,4 +955,34 @@ class OverlayService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private var autoVisStarted = false
+    private fun startAutoVisibilityWatcher() {
+        if (autoVisStarted) return
+        autoVisStarted = true
+        val h = android.os.Handler(android.os.Looper.getMainLooper())
+        val r = object : Runnable {
+            override fun run() {
+                if (!isRunning) {
+                    autoVisStarted = false
+                    return
+                }
+                rootContainer?.let { container ->
+                    if (Prefs.autoShowHudInGames) {
+                        val pkg = TelemetryHub.activeForegroundPkg.orEmpty()
+                        val isHomeOrSelf = pkg.isBlank() ||
+                            pkg == "com.shin.framepulse" ||
+                            pkg.contains("launcher", ignoreCase = true) ||
+                            pkg.contains("trebuchet", ignoreCase = true) ||
+                            pkg == "com.android.systemui"
+                        container.visibility = if (isHomeOrSelf) View.GONE else View.VISIBLE
+                    } else if (container.visibility != View.VISIBLE) {
+                        container.visibility = View.VISIBLE
+                    }
+                }
+                h.postDelayed(this, 1000L)
+            }
+        }
+        h.postDelayed(r, 1000L)
+    }
 }

@@ -864,6 +864,41 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                         ) {
                             Text("Salin Ringkasan Benchmark (Share)", color = activeAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
+                        val adv = BenchmarkExporter.computeMetrics(latestRes, TelemetryHub.fpsHistory.toList())
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = String.format(Locale.US, "Frametime: %.1f ms • Stutter: %dx • Stabilitas: %d%%", adv.avgFrameTimeMs, adv.stutterCount, adv.stabilityPercent),
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    val path = BenchmarkExporter.exportCsv(context, latestRes, TelemetryHub.fpsHistory.toList())
+                                    val msg = if (path != null) "CSV tersimpan: $path" else "Gagal menyimpan CSV"
+                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Export CSV", color = EmeraldNeon, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    val path = BenchmarkExporter.exportPngCard(context, latestRes, TelemetryHub.fpsHistory.toList())
+                                    val msg = if (path != null) "Card PNG tersimpan di Galeri!" else "Gagal membuat Card PNG"
+                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Simpan Card PNG", color = CyberCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                             if (benchmarkHistory.size > 1) {
                                 Spacer(Modifier.height(12.dp))
@@ -1670,6 +1705,25 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                     ) {
                         Text("Reset Posisi HUD", color = AmberVolt, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                var autoShowGames by remember { mutableStateOf(Prefs.autoShowHudInGames) }
+                OutlinedButton(
+                    onClick = {
+                        autoShowGames = !autoShowGames
+                        Prefs.autoShowHudInGames = autoShowGames
+                        val msg = if (autoShowGames) "Auto-Show aktif: HUD otomatis sembunyi di Home" else "Auto-Show nonaktif: HUD selalu tampil"
+                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text(
+                        text = if (autoShowGames) "Auto-Show HUD Khusus Game: AKTIF" else "Auto-Show HUD Khusus Game: NONAKTIF",
+                        color = if (autoShowGames) EmeraldNeon else TextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
                             Spacer(Modifier.height(10.dp))
                             AppStrings.supportedLanguages.chunked(3).forEachIndexed { rowIdx, rowItems ->
