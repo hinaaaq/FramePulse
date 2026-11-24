@@ -672,7 +672,6 @@ class OverlayService : Service() {
         sparklineView?.visibility = if (allowGraph) View.VISIBLE else View.GONE
         quickActionRow?.visibility =
             if (Prefs.showQuickButtons && !isTouchLocked) View.VISIBLE else View.GONE
-                        }
 
         val land = isLandscape()
         layoutParams.x = Prefs.getPosX(land)
@@ -963,18 +962,11 @@ class OverlayService : Service() {
         val h = android.os.Handler(android.os.Looper.getMainLooper())
         val r = object : Runnable {
             override fun run() {
-                if (!isRunning) {
-                    autoVisStarted = false
-                    return
-                }
+                if (!isRunning) { autoVisStarted = false; return }
                 rootContainer?.let { container ->
                     if (Prefs.autoShowHudInGames) {
                         val pkg = TelemetryHub.activeForegroundPkg.orEmpty()
-                        val isHomeOrSelf = pkg.isBlank() ||
-                            pkg == "com.shin.framepulse" ||
-                            pkg.contains("launcher", ignoreCase = true) ||
-                            pkg.contains("trebuchet", ignoreCase = true) ||
-                            pkg == "com.android.systemui"
+                        val isHomeOrSelf = pkg.isBlank() || pkg == "com.shin.framepulse" || pkg.contains("launcher", ignoreCase = true) || pkg.contains("trebuchet", ignoreCase = true) || pkg == "com.android.systemui"
                         container.visibility = if (isHomeOrSelf) View.GONE else View.VISIBLE
                     } else if (container.visibility != View.VISIBLE) {
                         container.visibility = View.VISIBLE
