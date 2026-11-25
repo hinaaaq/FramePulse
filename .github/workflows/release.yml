@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (contoh: v1.0.0)'
+        description: 'Release tag (contoh: v1.2.3)'
         required: true
-        default: 'v1.0.0'
+        default: 'v1.2.3'
 
 permissions:
   contents: write
@@ -28,8 +28,6 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.7'
 
       - name: Decode Permanent Release Keystore
         env:
@@ -39,25 +37,36 @@ jobs:
             echo "::error::Secret KEYSTORE_BASE64 belum diisi di GitHub Settings -> Secrets -> Actions!"
             exit 1
           fi
-          echo "$KEYSTORE_BASE64" | base64 -d > "${{ github.workspace }}/release.jks"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
 
       - name: Build Signed Release APK
         env:
-          KEYSTORE_FILE: ${{ github.workspace }}/release.jks
+          KEYSTORE_FILE: ${{ runner.temp }}/release.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: gradle assembleRelease --no-daemon --stacktrace
+        run: |
+          if [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::error::Signing secrets belum lengkap di GitHub Secrets!"
+            exit 1
+          fi
+          ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Prepare APK, SHA-256 & Optional VirusTotal Scan
         id: pkg
         env:
           VT_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
           TAG="${GITHUB_REF_NAME}"
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            TAG="${{ github.event.inputs.tag }}"
+            TAG="${INPUT_TAG}"
           fi
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::Format tag rilis tidak valid: $TAG"
+            exit 1
+          fi
+
           APK_SRC="app/build/outputs/apk/release/app-release.apk"
           APK_OUT="FramePulse-${TAG}-signed.apk"
           cp "$APK_SRC" "$APK_OUT"
@@ -65,14 +74,14 @@ jobs:
           SHA256=$(sha256sum "$APK_OUT" | awk '{print $1}')
           echo "$SHA256  $APK_OUT" > SHA256SUMS.txt
 
-          VT_STATUS="Verifikasi mandiri lewat SHA-256 di link VirusTotal di bawah."
+          VT_STATUS="Verifikasi mandiri lewat SHA-256 di tautan VirusTotal di bawah."
           if [ -n "$VT_API_KEY" ]; then
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            HTTP_CODE=$(curl -s --max-time 60 -o /dev/null -w "%{http_code}" \
               -X POST "https://www.virustotal.com/api/v3/files" \
               -H "x-apikey: $VT_API_KEY" \
-              -F "file=@$APK_OUT")
+              -F "file=@$APK_OUT" || echo "000")
             if [ "$HTTP_CODE" = "200" ]; then
-              VT_STATUS="APK telah diunggah otomatis ke VirusTotal saat build."
+              VT_STATUS="APK telah diunggah otomatis ke VirusTotal saat proses build."
             fi
           fi
 
@@ -84,24 +93,23 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.pkg.outputs.tag }}
+          APK: ${{ steps.pkg.outputs.apk }}
+          SHA: ${{ steps.pkg.outputs.sha256 }}
+          VT_NOTE: ${{ steps.pkg.outputs.vt_status }}
         run: |
-          TAG="${{ steps.pkg.outputs.tag }}"
-          APK="${{ steps.pkg.outputs.apk }}"
-          SHA="${{ steps.pkg.outputs.sha256 }}"
-          VT_NOTE="${{ steps.pkg.outputs.vt_status }}"
-
-          cat << NOTES > release_notes.md
-          ## FramePulse ${TAG} (Stable Release)
-
-          ### Cara Pasang & Update
-          1. Download file **\`${APK}\`** di bawah ini dan langsung pasang (tanpa perlu root).
-          2. **Update Tanpa Uninstall:** File APK ini ditandatangani dengan kunci rilis permanen. Untuk versi berikutnya, cukup install APK baru langsung di atas versi lama — seluruh pengaturan, tema, lisensi Pro, dan riwayat benchmark tetap aman. *(Jika sebelumnya memakai versi debug/dev, uninstall versi debug satu kali saja sebelum memasang v1.0.0.)*
-
-          ### Verifikasi Keamanan & Integritas
-          - **SHA-256:** \`${SHA}\`
-          - **VirusTotal:** [Cek hasil scan VirusTotal untuk APK ini](https://www.virustotal.com/gui/file/${SHA})
-          - *${VT_NOTE}*
-          NOTES
+          {
+            echo "## FramePulse ${TAG} (Stable Release)"
+            echo ""
+            echo "### Cara Pasang & Update"
+            echo "1. Unduh file **\`${APK}\`** di bawah ini dan langsung pasang (tanpa perlu root)."
+            echo "2. **Update Tanpa Uninstall:** File APK ini ditandatangani dengan kunci rilis permanen. Untuk pembaruan versi berikutnya, cukup pasang APK baru langsung di atas versi sebelumnya — seluruh pengaturan, tema, lisensi, dan riwayat benchmark tetap tersimpan."
+            echo ""
+            echo "### Verifikasi Keamanan & Integritas"
+            echo "- **SHA-256:** \`${SHA}\`"
+            echo "- **VirusTotal:** [Cek hasil pemindaian VirusTotal](https://www.virustotal.com/gui/file/${SHA})"
+            echo "- *${VT_NOTE}*"
+          } > release_notes.md
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" SHA256SUMS.txt --clobber
@@ -114,4 +122,4 @@ jobs:
 
       - name: Cleanup Keystore
         if: always()
-        run: rm -f "${{ github.workspace }}/release.jks"
+        run: rm -f "$RUNNER_TEMP/release.jks"

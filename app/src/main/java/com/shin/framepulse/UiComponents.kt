@@ -65,21 +65,21 @@ val TextPrimary = Color(0xFFF8FAFC)
 val TextSecondary = Color(0xFF94A3B8)
 val TextMuted = Color(0xFF64748B)
 
-val FramePulseTypography = Typography(
+fun buildFramePulseTypography(baseFont: FontFamily = FontFamily.SansSerif): Typography = Typography(
     titleLarge = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = baseFont,
         fontWeight = FontWeight.ExtraBold,
         fontSize = 20.sp,
         letterSpacing = (-0.3).sp
     ),
     titleMedium = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = baseFont,
         fontWeight = FontWeight.Bold,
         fontSize = 14.sp,
         letterSpacing = 0.5.sp
     ),
     bodyMedium = TextStyle(
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = baseFont,
         fontWeight = FontWeight.Normal,
         fontSize = 13.sp,
         lineHeight = 18.sp
@@ -92,6 +92,8 @@ val FramePulseTypography = Typography(
         fontFeatureSettings = "tnum"
     )
 )
+
+val FramePulseTypography = buildFramePulseTypography()
 
 @Composable
 fun FramePulseLogoMark(accent: Color, modifier: Modifier = Modifier.size(34.dp)) {
@@ -490,7 +492,7 @@ fun HudLivePreviewBox(
             if (sFps) add(Triple("", "${telemetry.fps}FPS", fpsColor))
             if (sTemp) add(Triple("", String.format(Locale.US, "%.1f°", telemetry.batteryTempC), accent))
             if (sCpu) add(Triple("C ", "${telemetry.cpuLoadPercent}%", TextPrimary))
-            if (sGpu) add(Triple("G ", "${telemetry.gpuLoadPercent ?: 62}%", PurpleGpu))
+            if (sGpu && telemetry.gpuLoadPercent != null) add(Triple("G ", "${telemetry.gpuLoadPercent}%", PurpleGpu))
             if (sBatt) add(Triple("", "${telemetry.batteryPercent}%", EmeraldNeon))
         } else {
             if (sFps) {
@@ -499,11 +501,14 @@ fun HudLivePreviewBox(
             }
             if (sCpu) add(Triple("CPU ", "${telemetry.cpuLoadPercent}%", TextPrimary))
             if (sClock) add(Triple("CLK ", String.format(Locale.US, "%.2fG", telemetry.cpuMaxGhz), Color(0xFFCBD5E1)))
-            if (sGpu) add(Triple("GPU ", telemetry.gpuLoadPercent?.let { "$it%" } ?: "62%", PurpleGpu))
+            if (sGpu) add(Triple("GPU ", telemetry.gpuLoadPercent?.let { "$it%" } ?: "N/A", PurpleGpu))
             if (sRam) add(Triple("RAM ", String.format(Locale.US, "%.1fG", telemetry.ramUsedGb), PinkRam))
             if (sTemp) add(Triple("TMP ", String.format(Locale.US, "%.1f°C", telemetry.batteryTempC), accent))
             if (sBatt) add(Triple("BAT ", "${telemetry.batteryPercent}%", EmeraldNeon))
-            if (sWatt) add(Triple("PWR ", String.format(Locale.US, "-%.1fW", telemetry.powerWatts), AmberVolt))
+            if (sWatt) {
+                val sign = if (telemetry.isCharging) "+" else "-"
+                add(Triple("PWR ", String.format(Locale.US, "%s%.1fW", sign, telemetry.powerWatts), if (telemetry.isCharging) EmeraldNeon else AmberVolt))
+            }
             if (sNet) add(Triple("NET ", "↓${telemetry.netDownKbps.toInt()}K", EmeraldNeon))
         }
     }.ifEmpty { listOf(Triple("FPS ", "${telemetry.fps}", fpsColor)) }

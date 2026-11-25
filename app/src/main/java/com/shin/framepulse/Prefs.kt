@@ -2,9 +2,12 @@ package com.shin.framepulse
 
 import android.content.Context
 import android.content.SharedPreferences
+import java.io.File
+import java.util.Locale
 
 object Prefs {
     private const val PREF_NAME = "framepulse_pro_prefs"
+    private const val CRASH_FILE_NAME = "last_crash.log"
 
     const val LAYOUT_HORIZONTAL = "HORIZONTAL"
     const val LAYOUT_VERTICAL = "VERTICAL"
@@ -29,16 +32,24 @@ object Prefs {
     @Volatile
     private var appCtx: Context? = null
 
+    @Volatile
+    private var cachedSp: SharedPreferences? = null
+
     fun init(context: Context) {
         if (appCtx == null) {
-            appCtx = context.applicationContext
+            val ctx = context.applicationContext
+            appCtx = ctx
+            cachedSp = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         }
     }
 
     private fun sp(): SharedPreferences {
+        cachedSp?.let { return it }
         val ctx = appCtx ?: throw IllegalStateException("Prefs.init() must be called first")
-        return ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        return ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).also { cachedSp = it }
     }
+
+    private fun crashFile(): File? = appCtx?.let { File(it.filesDir, CRASH_FILE_NAME) }
 
     var layoutMode: String
         get() = sp().getString("layout_mode", LAYOUT_HORIZONTAL) ?: LAYOUT_HORIZONTAL
@@ -152,12 +163,28 @@ object Prefs {
         set(v) = sp().edit().putBoolean("show_quick_buttons", v).apply()
 
     var lastCrashLog: String
-        get() = sp().getString("last_crash_log", "") ?: ""
-        set(v) = sp().edit().putString("last_crash_log", v).apply()
+        get() {
+            val fileText = runCatching {
+                val f = crashFile()
+                if (f != null && f.exists()) f.readText(Charsets.UTF_8) else ""
+            }.getOrDefault("")
+            if (fileText.isNotBlank()) return fileText
+            return sp().getString("last_crash_log", "") ?: ""
+        }
+        set(v) {
+            runCatching {
+                val f = crashFile()
+                if (f != null) {
+                    if (v.isBlank()) f.delete() else f.writeText(v, Charsets.UTF_8)
+                }
+            }
+            sp().edit().remove("last_crash_log").apply()
+        }
 
     fun saveCrashLogSync(log: String) {
-        if (appCtx == null) return
-        sp().edit().putString("last_crash_log", log).commit()
+        runCatching {
+            crashFile()?.writeText(log, Charsets.UTF_8)
+        }
     }
 
     var benchmarkHistoryRaw: String
@@ -178,7 +205,7 @@ object Prefs {
 
     var lastGamePackage: String
         get() = sp().getString("last_game_package", "") ?: ""
-        set(v) = sp().edit().putString("last_game_package", v).apply()
+        set(v) = sp().edit().putString("last_game_package", ShizukuShell.sanitizePackage(v)).apply()
 
     var appLanguage: String
         get() = sp().getString("app_language", "auto") ?: "auto"
@@ -194,7 +221,7 @@ object Prefs {
 
     var linkedGoogleEmail: String
         get() = sp().getString("linked_google_email", "") ?: ""
-        set(v) = sp().edit().putString("linked_google_email", v.trim().lowercase(java.util.Locale.US)).apply()
+        set(v) = sp().edit().putString("linked_google_email", v.trim().lowercase(Locale.US)).apply()
 
     var proTierName: String
         get() = sp().getString("pro_tier_name", "") ?: ""

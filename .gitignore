@@ -1,5 +1,6 @@
 *.iml
 .gradle/
+.kotlin/
 /local.properties
 /.idea/
 .DS_Store
@@ -8,10 +9,24 @@
 /captures/
 .externalNativeBuild/
 .cxx/
+
+# Signing & Secrets
 *.jks
 *.keystore
 *.pem
 *.key
 *private_keygen*
+.env
+.env.*
+
+# Build & Release Artifacts
+*.apk
+*.aab
+SHA256SUMS.txt
+release_notes.md
+
+# Tooling & Local Scratch
+.wrangler/
+node_modules/
 framepulse_context.txt
--la
+HANDOFF.md

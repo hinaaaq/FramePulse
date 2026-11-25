@@ -47,7 +47,12 @@ class CrashActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val logText = intent.getStringExtra(EXTRA_LOG) ?: "Tidak ada detail error."
+        Prefs.init(this)
+        val isId = AppStrings.resolveLangCode() == "id"
+        val fallback = Prefs.lastCrashLog.ifBlank {
+            if (isId) "Tidak ada detail error." else "No error details available."
+        }
+        val logText = intent.getStringExtra(EXTRA_LOG)?.takeIf { it.isNotBlank() } ?: fallback
 
         setContent {
             MaterialTheme(
@@ -59,16 +64,21 @@ class CrashActivity : ComponentActivity() {
             ) {
                 CrashScreen(
                     logText = logText,
+                    isId = isId,
                     onCopy = {
                         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         cm.setPrimaryClip(ClipData.newPlainText("FramePulse Crash Log", logText))
-                        Toast.makeText(this, "Log crash berhasil disalin", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            this,
+                            if (isId) "Log crash berhasil disalin" else "Crash log copied to clipboard",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     },
                     onRestart = {
-                        val intent = Intent(this, MainActivity::class.java).apply {
+                        val restartIntent = Intent(this, MainActivity::class.java).apply {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
                         }
-                        startActivity(intent)
+                        startActivity(restartIntent)
                         finish()
                     }
                 )
@@ -80,6 +90,7 @@ class CrashActivity : ComponentActivity() {
 @Composable
 private fun CrashScreen(
     logText: String,
+    isId: Boolean,
     onCopy: () -> Unit,
     onRestart: () -> Unit
 ) {
@@ -99,7 +110,11 @@ private fun CrashScreen(
         )
         Spacer(Modifier.height(4.dp))
         Text(
-            text = "Aplikasi menangkap error tak terduga. Salin log di bawah ini untuk langsung diperbaiki.",
+            text = if (isId) {
+                "Aplikasi menangkap error tak terduga. Salin log di bawah ini untuk langsung diperbaiki."
+            } else {
+                "An unexpected error was caught. Copy the log below so it can be diagnosed."
+            },
             color = TextSecondary,
             fontSize = 12.sp
         )
@@ -136,7 +151,7 @@ private fun CrashScreen(
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = CyberCyan)
             ) {
-                Text("SALIN LOG", color = Color.Black, fontWeight = FontWeight.ExtraBold)
+                Text(if (isId) "SALIN LOG" else "COPY LOG", color = Color.Black, fontWeight = FontWeight.ExtraBold)
             }
             Button(
                 onClick = onRestart,
@@ -144,7 +159,7 @@ private fun CrashScreen(
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B))
             ) {
-                Text("BUKA ULANG", color = TextPrimary, fontWeight = FontWeight.Bold)
+                Text(if (isId) "BUKA ULANG" else "RESTART APP", color = TextPrimary, fontWeight = FontWeight.Bold)
             }
         }
     }

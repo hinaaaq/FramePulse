@@ -76,11 +76,11 @@ flowchart LR
 
 ## Cara Pasang & Upgrade
 
-1. Buka halaman [**GitHub Releases**](https://github.com/hinaaaq/FramePulse/releases/latest) dan unduh **`FramePulse-v1.0.1-signed.apk`**.
+1. Buka halaman [**GitHub Releases**](https://github.com/hinaaaq/FramePulse/releases/latest) dan unduh file **`FramePulse-v*-signed.apk`** terbaru.
 2. Pasang APK seperti biasa, lalu aktifkan izin **Floating Overlay** di tab **Setup**.
-3. *(Opsional — direkomendasikan)* Pasang dan jalankan [**Shizuku**](https://shizuku.rikka.app/), lalu hubungkan di tab **Setup** untuk mengaktifkan telemetri Tier 2.
+3. *(Opsional — direkomendasikan)* Pasang dan jalankan [**Shizuku**](https://shizuku.rikka.app/), lalu hubungkan di tab **Setup** untuk mengaktifkan telemetri Tier 2 (`SurfaceFlinger` FPS, 1% Low, dan Tweaks).
 
-> **Upgrade Tanpa Kehilangan Data:** Mulai dari `v1.0.1`, semua rilis resmi memakai tanda tangan digital permanen. Untuk update ke versi berikutnya, cukup unduh dan install langsung tanpa uninstall.
+> **Upgrade Tanpa Kehilangan Data:** Seluruh rilis resmi memakai tanda tangan digital permanen. Untuk update ke versi berikutnya, cukup unduh dan install langsung tanpa uninstall.
 
 ---
 

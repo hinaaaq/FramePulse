@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 private data class OnboardingPage(
@@ -74,51 +75,89 @@ fun WelcomeOnboardingScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val isId = AppStrings.resolveLangCode() == "id"
     var pageIndex by remember { mutableIntStateOf(0) }
     var isSigningIn by remember { mutableStateOf(false) }
 
-    val pages = remember {
-        listOf(
-            OnboardingPage(
-                badge = "FPS",
-                title = "Selamat Datang di FramePulse",
-                subtitle = "Monitor performa & True Game FPS real-time tanpa root langsung dari perangkat Android kamu.",
-                bullets = listOf(
-                    "Pembacaan True Game FPS akurat via Shizuku",
-                    "Ringan, minim overhead, tanpa akses root",
-                    "Mendukung Android 16 & layar high refresh rate"
+    val pages = remember(isId) {
+        if (isId) {
+            listOf(
+                OnboardingPage(
+                    badge = "FPS",
+                    title = "Selamat Datang di FramePulse",
+                    subtitle = "Monitor performa & True Game FPS real-time tanpa root langsung dari perangkat Android kamu.",
+                    bullets = listOf(
+                        "Pembacaan True Game FPS akurat via Shizuku + SurfaceFlinger",
+                        "Ringan, minim overhead, 100% aman tanpa akses root",
+                        "Siap untuk Android 16 & layar high refresh rate"
+                    ),
+                    accent = Color(0xFF00E5FF)
                 ),
-                accent = Color(0xFF00E5FF)
-            ),
-            OnboardingPage(
-                badge = "100%",
-                title = "Semua Fitur Inti Gratis",
-                subtitle = "Semua metrik HUD profesional dan optimasi game terbuka penuh tanpa paywall.",
-                bullets = listOf(
-                    "HUD lengkap: FPS, 1% Low, CPU, GPU, RAM, Watt & Net",
-                    "Bebas pilih gaya HUD, grafik real-time & interval cepat",
-                    "Preset per-game & Game Booster aktif untuk semua user"
+                OnboardingPage(
+                    badge = "100%",
+                    title = "Semua Fitur Inti Gratis",
+                    subtitle = "Seluruh metrik HUD profesional dan optimasi game terbuka penuh tanpa iklan atau paywall.",
+                    bullets = listOf(
+                        "HUD lengkap: FPS, 1% Low, CPU, GPU, RAM, Watt & Net",
+                        "Bebas pilih gaya HUD, grafik real-time & interval cepat",
+                        "Preset per-game, Shizuku Tweaks & Benchmark Recorder gratis"
+                    ),
+                    accent = Color(0xFF10B981)
                 ),
-                accent = Color(0xFF10B981)
-            ),
-            OnboardingPage(
-                badge = "G",
-                title = "Hubungkan Akun Google",
-                subtitle = "Login dengan akun Google untuk pengalaman penuh dan sinkronisasi otomatis.",
-                bullets = listOf(
-                    "Kirim & simpan skor benchmark ke Global Leaderboard",
-                    "Sinkronisasi otomatis status Supporter Pass (Donate Dev)",
-                    "Backup identitas perangkat saat ganti atau reinstall app"
-                ),
-                accent = Color(0xFF60A5FA)
+                OnboardingPage(
+                    badge = "G",
+                    title = "Hubungkan Akun Google",
+                    subtitle = "Tautkan akun Google untuk pengalaman penuh dan sinkronisasi otomatis.",
+                    bullets = listOf(
+                        "Kirim & simpan skor benchmark ke Verified Global Leaderboard",
+                        "Sinkronisasi otomatis status Supporter Pass (Donate Dev)",
+                        "Pemulihan status perangkat otomatis saat reinstall aplikasi"
+                    ),
+                    accent = Color(0xFF60A5FA)
+                )
             )
-        )
+        } else {
+            listOf(
+                OnboardingPage(
+                    badge = "FPS",
+                    title = "Welcome to FramePulse",
+                    subtitle = "Monitor real-time system thermals & True Game FPS on Android without root access.",
+                    bullets = listOf(
+                        "Accurate True Game FPS & 1% Low via Shizuku + SurfaceFlinger",
+                        "Ultra-lightweight overlay with zero root modifications",
+                        "Built for Android 16 & high-refresh-rate displays"
+                    ),
+                    accent = Color(0xFF00E5FF)
+                ),
+                OnboardingPage(
+                    badge = "100%",
+                    title = "All Core Features Free",
+                    subtitle = "Every telemetry sensor, HUD layout, and Shizuku performance tool is unlocked with zero ads.",
+                    bullets = listOf(
+                        "Full HUD: FPS, 1% Low, CPU, GPU, RAM, Power Draw & Network",
+                        "All HUD styles, live Bezier sparkline & fast 0.25s refresh",
+                        "Per-game presets, Shizuku Tweaks & Benchmark Recorder included"
+                    ),
+                    accent = Color(0xFF10B981)
+                ),
+                OnboardingPage(
+                    badge = "G",
+                    title = "Link Google Account",
+                    subtitle = "Optional account link for global rankings and automatic Supporter sync.",
+                    bullets = listOf(
+                        "Submit verified benchmark sessions to the Global Leaderboard",
+                        "Instant cloud sync for voluntary Supporter Pass perks",
+                        "Seamless restoration across app updates or reinstalls"
+                    ),
+                    accent = Color(0xFF60A5FA)
+                )
+            )
+        }
     }
 
     val googlePickerLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        isSigningIn = false
         if (result.resultCode == Activity.RESULT_OK) {
             val picked = result.data
                 ?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)
@@ -128,15 +167,24 @@ fun WelcomeOnboardingScreen(
                 val normalized = picked.lowercase(Locale.US)
                 Prefs.linkedGoogleEmail = normalized
                 ProLicenseManager.getStatus(forceRefresh = true)
-                if (ProLicenseManager.isCloudConfigured()) {
-                    scope.launch(Dispatchers.IO) {
-                        runCatching { ProLicenseManager.syncWithCloud(context) }
+                scope.launch {
+                    if (ProLicenseManager.isCloudConfigured()) {
+                        withContext(Dispatchers.IO) {
+                            runCatching { ProLicenseManager.syncWithCloud(context, normalized) }
+                        }
                     }
+                    isSigningIn = false
+                    Toast.makeText(
+                        context,
+                        if (isId) "Terhubung sebagai $normalized" else "Connected as $normalized",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    onFinish()
                 }
-                Toast.makeText(context, "Terhubung sebagai $normalized", Toast.LENGTH_SHORT).show()
-                onFinish()
+                return@rememberLauncherForActivityResult
             }
         }
+        isSigningIn = false
     }
 
     fun launchGoogleLogin() {
@@ -154,7 +202,12 @@ fun WelcomeOnboardingScreen(
             googlePickerLauncher.launch(intent)
         } catch (_: Throwable) {
             isSigningIn = false
-            Toast.makeText(context, "Google Account Picker tidak tersedia di perangkat ini", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                context,
+                if (isId) "Google Account Picker tidak tersedia di perangkat ini"
+                else "Google Account Picker is unavailable on this device",
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
@@ -186,7 +239,6 @@ fun WelcomeOnboardingScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Top bar: step counter + skip to login
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -202,7 +254,7 @@ fun WelcomeOnboardingScreen(
                 if (pageIndex < pages.lastIndex) {
                     TextButton(onClick = { pageIndex = pages.lastIndex }) {
                         Text(
-                            text = "Lewati",
+                            text = if (isId) "Lewati" else "Skip",
                             color = Color(0xFF94A3B8),
                             fontSize = 13.sp
                         )
@@ -212,7 +264,6 @@ fun WelcomeOnboardingScreen(
                 }
             }
 
-            // Animated main content
             AnimatedContent(
                 targetState = pageIndex,
                 transitionSpec = {
@@ -232,7 +283,6 @@ fun WelcomeOnboardingScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // Animated Hero Badge
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
@@ -272,7 +322,6 @@ fun WelcomeOnboardingScreen(
 
                     Spacer(modifier = Modifier.height(24.dp))
 
-                    // Feature bullets card
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -304,7 +353,6 @@ fun WelcomeOnboardingScreen(
                         }
                     }
 
-                    // Warning note on last page for guest mode
                     if (idx == pages.lastIndex) {
                         Spacer(modifier = Modifier.height(14.dp))
                         Box(
@@ -316,7 +364,11 @@ fun WelcomeOnboardingScreen(
                                 .padding(12.dp)
                         ) {
                             Text(
-                                text = "Catatan: Masuk tanpa akun Google tidak direkomendasikan — skor Global Leaderboard dan status Supporter Pass tidak dapat tersinkronisasi.",
+                                text = if (isId) {
+                                    "Catatan: Kamu tetap bisa memakai semua fitur telemetri & HUD tanpa login. Akun Google hanya diperlukan untuk Global Leaderboard & sinkronisasi Supporter Pass."
+                                } else {
+                                    "Note: All HUD telemetry & performance tools work offline without login. Linking Google is only needed for Global Leaderboard & Supporter Pass sync."
+                                },
                                 color = Color(0xFFFCD34D),
                                 fontSize = 12.sp,
                                 lineHeight = 17.sp
@@ -326,7 +378,6 @@ fun WelcomeOnboardingScreen(
                 }
             }
 
-            // Bottom indicator + actions
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -367,7 +418,7 @@ fun WelcomeOnboardingScreen(
                                     .height(50.dp),
                                 shape = RoundedCornerShape(14.dp)
                             ) {
-                                Text("Kembali", color = Color(0xFFCBD5E1))
+                                Text(if (isId) "Kembali" else "Back", color = Color(0xFFCBD5E1))
                             }
                         }
                         Button(
@@ -382,7 +433,7 @@ fun WelcomeOnboardingScreen(
                             )
                         ) {
                             Text(
-                                text = "Lanjut",
+                                text = if (isId) "Lanjut" else "Next",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp
                             )
@@ -402,7 +453,11 @@ fun WelcomeOnboardingScreen(
                         )
                     ) {
                         Text(
-                            text = if (isSigningIn) "Membuka Akun Google..." else "Masuk dengan Google (Direkomendasikan)",
+                            text = if (isSigningIn) {
+                                if (isId) "Menghubungkan Akun Google..." else "Connecting Google Account..."
+                            } else {
+                                if (isId) "Hubungkan Akun Google (Direkomendasikan)" else "Link Google Account (Recommended)"
+                            },
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp
                         )
@@ -412,10 +467,11 @@ fun WelcomeOnboardingScreen(
 
                     TextButton(
                         onClick = { onFinish() },
+                        enabled = !isSigningIn,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            text = "Lanjut Tanpa Login (Tidak Direkomendasikan)",
+                            text = if (isId) "Lanjut Tanpa Akun Google" else "Continue Without Account",
                             color = Color(0xFF94A3B8),
                             fontSize = 12.sp
                         )

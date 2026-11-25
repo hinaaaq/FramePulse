@@ -1,5 +1,6 @@
 package com.shin.framepulse.v110
 
+import com.shin.framepulse.AppStrings
 import com.shin.framepulse.benchmark.BenchmarkComparison
 import com.shin.framepulse.benchmark.BenchmarkSessionRecord
 import com.shin.framepulse.hud.HudDensityMode
@@ -53,19 +54,38 @@ object FramePulseSessionInsights {
         )
     }
 
-    fun formatComparisonHeadline(comparison: BenchmarkComparison?): String {
-        if (comparison == null) return "Belum ada sesi pembanding untuk selisih metrik."
+    fun formatComparisonHeadline(comparison: BenchmarkComparison?, isId: Boolean = AppStrings.resolveLangCode() == "id"): String {
+        if (comparison == null) {
+            return if (isId) "Belum ada sesi pembanding untuk selisih metrik."
+            else "Record at least 2 sessions to compare Δ FPS & thermal shifts."
+        }
         val lowDelta = comparison.deltaLow1PercentFps
         val tempDelta = comparison.deltaPeakTempC
-        val lowNote = when {
-            lowDelta >= 2.0f -> "1% Low naik (+${fmt1(lowDelta)} FPS)"
-            lowDelta <= -2.0f -> "1% Low turun (${fmt1(lowDelta)} FPS)"
-            else -> "1% Low relatif stabil"
+        val lowNote = if (isId) {
+            when {
+                lowDelta >= 2.0f -> "1% Low naik (+${fmt1(lowDelta)} FPS)"
+                lowDelta <= -2.0f -> "1% Low turun (${fmt1(lowDelta)} FPS)"
+                else -> "1% Low stabil (${if (lowDelta >= 0f) "+" else ""}${fmt1(lowDelta)} FPS)"
+            }
+        } else {
+            when {
+                lowDelta >= 2.0f -> "1% Low up (+${fmt1(lowDelta)} FPS)"
+                lowDelta <= -2.0f -> "1% Low down (${fmt1(lowDelta)} FPS)"
+                else -> "1% Low steady (${if (lowDelta >= 0f) "+" else ""}${fmt1(lowDelta)} FPS)"
+            }
         }
-        val tempNote = when {
-            tempDelta <= -1.5f -> "suhu puncak lebih adem (${fmt1(tempDelta)}°C)"
-            tempDelta >= 1.5f -> "suhu puncak naik (+${fmt1(tempDelta)}°C)"
-            else -> "suhu puncak mirip baseline"
+        val tempNote = if (isId) {
+            when {
+                tempDelta <= -1.5f -> "suhu lebih adem (${fmt1(tempDelta)}°C)"
+                tempDelta >= 1.5f -> "suhu puncak naik (+${fmt1(tempDelta)}°C)"
+                else -> "suhu stabil (${if (tempDelta >= 0f) "+" else ""}${fmt1(tempDelta)}°C)"
+            }
+        } else {
+            when {
+                tempDelta <= -1.5f -> "cooler peak (${fmt1(tempDelta)}°C)"
+                tempDelta >= 1.5f -> "warmer peak (+${fmt1(tempDelta)}°C)"
+                else -> "steady temp (${if (tempDelta >= 0f) "+" else ""}${fmt1(tempDelta)}°C)"
+            }
         }
         return "$lowNote • $tempNote"
     }
@@ -84,5 +104,8 @@ object FramePulseSessionInsights {
 
     private fun HudRuntimeConfig.normalizedOpacityPercent(): Int = opacityPercent.coerceIn(30, 100)
 
-    private fun fmt1(value: Float): String = ((value * 10f).roundToInt() / 10f).toString()
+    private fun fmt1(value: Float): String {
+        if (!value.isFinite()) return "0.0"
+        return ((value * 10f).roundToInt() / 10f).toString()
+    }
 }

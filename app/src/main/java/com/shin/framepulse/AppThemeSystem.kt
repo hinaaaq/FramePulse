@@ -46,7 +46,8 @@ enum class AppFontId {
 data class AppThemeSpec(
     val id: AppThemeId,
     val name: String,
-    val subtitle: String,
+    val subtitleId: String,
+    val subtitleEn: String,
     val bgDark: Color,
     val cardBg: Color,
     val accent: Color,
@@ -54,7 +55,10 @@ data class AppThemeSpec(
     val iconGlyph: String,
     val isProOnly: Boolean,
     val isOwnerOnly: Boolean = false
-)
+) {
+    val subtitle: String
+        get() = if (AppStrings.resolveLangCode() == "id") subtitleId else subtitleEn
+}
 
 data class AppFontSpec(
     val id: AppFontId,
@@ -78,7 +82,8 @@ object AppThemeManager {
         AppThemeSpec(
             id = AppThemeId.CYBER_EMERALD,
             name = "Cyber Emerald",
-            subtitle = "Standar FramePulse • Gratis",
+            subtitleId = "Standar FramePulse • Gratis",
+            subtitleEn = "FramePulse Default • Free",
             bgDark = Color(0xFF090D16),
             cardBg = Color(0xFF111827),
             accent = Color(0xFF10B981),
@@ -88,8 +93,9 @@ object AppThemeManager {
         ),
         AppThemeSpec(
             id = AppThemeId.OBSIDIAN_MINIMAL,
-            name = "Obsidian Pro",
-            subtitle = "Minimalis bersih ala Apple/iOS • Gratis",
+            name = "Obsidian Minimal",
+            subtitleId = "Hitam monokrom bersih • Gratis",
+            subtitleEn = "Clean monochrome dark • Free",
             bgDark = Color(0xFF0A0A0C),
             cardBg = Color(0xFF16161A),
             accent = Color(0xFFE5E7EB),
@@ -100,7 +106,8 @@ object AppThemeManager {
         AppThemeSpec(
             id = AppThemeId.STEAM_SLATE,
             name = "Steam Slate",
-            subtitle = "Biru slate modern ala Steam Deck • Pro",
+            subtitleId = "Biru slate modern ala handheld • Supporter",
+            subtitleEn = "Modern handheld slate blue • Supporter",
             bgDark = Color(0xFF0E141B),
             cardBg = Color(0xFF1B2838),
             accent = Color(0xFF66C0F4),
@@ -111,7 +118,8 @@ object AppThemeManager {
         AppThemeSpec(
             id = AppThemeId.CRIMSON_ESPORTS,
             name = "Crimson Esports",
-            subtitle = "Merah-oranye kompetitif • Pro",
+            subtitleId = "Merah-oranye kompetitif • Supporter",
+            subtitleEn = "Competitive crimson & ember • Supporter",
             bgDark = Color(0xFF13090C),
             cardBg = Color(0xFF211116),
             accent = Color(0xFFF43F5E),
@@ -122,7 +130,8 @@ object AppThemeManager {
         AppThemeSpec(
             id = AppThemeId.MIDNIGHT_VIOLET,
             name = "Midnight Violet",
-            subtitle = "Ungu neon futuristik • Pro",
+            subtitleId = "Ungu neon futuristik • Supporter",
+            subtitleEn = "Futuristic neon violet • Supporter",
             bgDark = Color(0xFF0D0A19),
             cardBg = Color(0xFF1A1430),
             accent = Color(0xFFA855F7),
@@ -133,7 +142,8 @@ object AppThemeManager {
         AppThemeSpec(
             id = AppThemeId.ARCTIC_CYAN,
             name = "Arctic Cyan",
-            subtitle = "Biru es dingin & tajam • Pro",
+            subtitleId = "Biru es dingin & tajam • Supporter",
+            subtitleEn = "Crisp glacial cyan • Supporter",
             bgDark = Color(0xFF07131A),
             cardBg = Color(0xFF0E222E),
             accent = Color(0xFF06B6D4),
@@ -144,7 +154,8 @@ object AppThemeManager {
         AppThemeSpec(
             id = AppThemeId.SOLAR_GOLD,
             name = "Solar Gold",
-            subtitle = "Emas mewah edisi premium • Pro",
+            subtitleId = "Emas mewah edisi premium • Supporter",
+            subtitleEn = "Luxury gold supporter edition • Supporter",
             bgDark = Color(0xFF120F07),
             cardBg = Color(0xFF211B0D),
             accent = Color(0xFFFACC15),
@@ -155,7 +166,8 @@ object AppThemeManager {
         AppThemeSpec(
             id = AppThemeId.SAKURA_PASTEL_DEV,
             name = "Sakura Pastel ♡",
-            subtitle = "Tema Rahasia Dev • Soft Pink & Baby Blue",
+            subtitleId = "Tema Khusus Owner • Soft Pink & Baby Blue",
+            subtitleEn = "Owner Exclusive • Soft Pink & Baby Blue",
             bgDark = Color(0xFF1B101A),
             cardBg = Color(0xFF281727),
             accent = Color(0xFFFF85C0),
@@ -167,7 +179,8 @@ object AppThemeManager {
         AppThemeSpec(
             id = AppThemeId.COTTON_CANDY_DEV,
             name = "Cotton Candy ♡",
-            subtitle = "Tema Rahasia Dev • Lavender & Bubblegum",
+            subtitleId = "Tema Khusus Owner • Lavender & Bubblegum",
+            subtitleEn = "Owner Exclusive • Lavender & Bubblegum",
             bgDark = Color(0xFF141124),
             cardBg = Color(0xFF211C38),
             accent = Color(0xFFFF9EE2),
@@ -214,9 +227,11 @@ fun ThemePickerDialog(
     isPro: Boolean,
     isOwner: Boolean,
     onSelect: (AppThemeSpec) -> Unit,
+    onFontSelect: (AppFontSpec) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val isId = AppStrings.resolveLangCode() == "id"
     var selectedFont by remember { mutableStateOf(AppThemeManager.loadFont(context)) }
     val visibleThemes = remember(isOwner) {
         AppThemeManager.allThemes.filter { !it.isOwnerOnly || isOwner }
@@ -232,17 +247,32 @@ fun ThemePickerDialog(
                     .border(1.dp, currentTheme.accent.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
                     .padding(16.dp)
             ) {
-                Text("Tampilan & Font (Terpadu)", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, fontFamily = selectedFont.fontFamily)
                 Text(
-                    if (isOwner) "Mode Owner: semua tema Pro + 2 tema rahasia terbuka."
-                    else "1 pusat pengaturan warna seluruh layar, bar navigasi & font.",
+                    if (isId) "Tampilan & Tipografi App" else "App Theme & Typography",
+                    color = Color.White,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 16.sp,
+                    fontFamily = selectedFont.fontFamily
+                )
+                Text(
+                    when {
+                        isOwner -> if (isId) "Mode Owner: semua tema Supporter + 2 tema eksklusif terbuka."
+                        else "Owner Mode: all Supporter themes + 2 exclusive themes unlocked."
+                        isId -> "Atur palet warna antarmuka utama, bar navigasi & gaya huruf."
+                        else -> "Customize interface colors, navigation bar, and app font family."
+                    },
                     color = Color(0xFF94A3B8),
                     fontSize = 11.sp,
                     fontFamily = selectedFont.fontFamily
                 )
                 Spacer(Modifier.height(10.dp))
 
-                Text("GAYA FONT", color = currentTheme.accent, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                Text(
+                    if (isId) "GAYA FONT" else "FONT FAMILY",
+                    color = currentTheme.accent,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp
+                )
                 Spacer(Modifier.height(5.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                     AppThemeManager.allFonts.forEach { font ->
@@ -256,7 +286,12 @@ fun ThemePickerDialog(
                                 .clickable {
                                     selectedFont = font
                                     AppThemeManager.saveFont(context, font.id)
-                                    Toast.makeText(context, "Font ${font.name} disimpan!", Toast.LENGTH_SHORT).show()
+                                    onFontSelect(font)
+                                    Toast.makeText(
+                                        context,
+                                        if (isId) "Font ${font.name} diterapkan!" else "${font.name} font applied!",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
                                 }
                                 .padding(vertical = 7.dp),
                             contentAlignment = Alignment.Center
@@ -273,7 +308,12 @@ fun ThemePickerDialog(
                 }
 
                 Spacer(Modifier.height(12.dp))
-                Text("TEMA WARNA GLOBAL", color = currentTheme.accent, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                Text(
+                    if (isId) "TEMA WARNA GLOBAL" else "GLOBAL COLOR THEMES",
+                    color = currentTheme.accent,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp
+                )
                 Spacer(Modifier.height(6.dp))
 
                 LazyColumn(
@@ -295,12 +335,20 @@ fun ThemePickerDialog(
                                 )
                                 .clickable {
                                     if (locked) {
-                                        Toast.makeText(context, "Khusus Supporter (Donate Dev)", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(
+                                            context,
+                                            if (isId) "Khusus Supporter Pass (Donate Dev)" else "Supporter Pass perk (Donate Dev)",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
                                         return@clickable
                                     }
                                     AppThemeManager.saveTheme(context, theme.id)
                                     onSelect(theme)
-                                    Toast.makeText(context, "Tema ${theme.name} diterapkan ke seluruh app!", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(
+                                        context,
+                                        if (isId) "Tema ${theme.name} diterapkan!" else "${theme.name} theme applied!",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
                                 }
                                 .padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -325,7 +373,7 @@ fun ThemePickerDialog(
                                                 .background(Brush.horizontalGradient(listOf(theme.accent, theme.accentSecondary)))
                                                 .padding(horizontal = 5.dp, vertical = 1.dp)
                                         ) {
-                                            Text("DEV SECRET", color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 8.5.sp)
+                                            Text("OWNER", color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 8.5.sp)
                                         }
                                     } else if (theme.isProOnly) {
                                         Box(
@@ -341,7 +389,7 @@ fun ThemePickerDialog(
                                 Text(theme.subtitle, color = Color(0xFFCBD5E1), fontSize = 10.5.sp, fontFamily = selectedFont.fontFamily)
                             }
                             if (selected) {
-                                Text("AKTIF", color = theme.accent, fontWeight = FontWeight.ExtraBold, fontSize = 10.sp)
+                                Text(if (isId) "AKTIF" else "ACTIVE", color = theme.accent, fontWeight = FontWeight.ExtraBold, fontSize = 10.sp)
                             } else if (locked) {
                                 Text("LOCK", color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold, fontSize = 10.sp)
                             }
@@ -350,7 +398,7 @@ fun ThemePickerDialog(
                 }
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                    Text("Tutup", color = Color(0xFF94A3B8))
+                    Text(if (isId) "Tutup" else "Close", color = Color(0xFF94A3B8))
                 }
             }
         }
@@ -360,6 +408,7 @@ fun ThemePickerDialog(
 @Composable
 fun ProHomeCommandHub(
     theme: AppThemeSpec,
+    fontFamily: FontFamily,
     isPro: Boolean,
     isOwner: Boolean,
     onOpenPresets: () -> Unit,
@@ -367,8 +416,7 @@ fun ProHomeCommandHub(
     onOpenThemes: () -> Unit,
     onOpenAbout: () -> Unit
 ) {
-    val context = LocalContext.current
-    val fontFamily = remember(theme) { AppThemeManager.loadFont(context).fontFamily }
+    val isId = AppStrings.resolveLangCode() == "id"
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -387,9 +435,21 @@ fun ProHomeCommandHub(
                     .clickable { onOpenPresets() }
                     .padding(12.dp)
             ) {
-                Text("Preset Game", color = theme.accent, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, fontFamily = fontFamily)
+                Text(
+                    if (isId) "Preset Game" else "Game Presets",
+                    color = theme.accent,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 13.sp,
+                    fontFamily = fontFamily
+                )
                 Spacer(Modifier.height(2.dp))
-                Text("Optimasi 1-tap Valorant, MLBB, PUBG", color = Color(0xFF94A3B8), fontSize = 10.sp, lineHeight = 13.sp, fontFamily = fontFamily)
+                Text(
+                    if (isId) "Optimasi 1-tap Valorant, MLBB, PUBG" else "1-tap profiles for Valorant, MLBB, PUBG",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 10.sp,
+                    lineHeight = 13.sp,
+                    fontFamily = fontFamily
+                )
             }
 
             Column(
@@ -403,7 +463,13 @@ fun ProHomeCommandHub(
             ) {
                 Text("Leaderboard", color = theme.accentSecondary, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, fontFamily = fontFamily)
                 Spacer(Modifier.height(2.dp))
-                Text("Rank Global & Simpan Kartu Pamer", color = Color(0xFF94A3B8), fontSize = 10.sp, lineHeight = 13.sp, fontFamily = fontFamily)
+                Text(
+                    if (isId) "Rank Global & Simpan Flex Card" else "Global Rank & Verified Flex Card",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 10.sp,
+                    lineHeight = 13.sp,
+                    fontFamily = fontFamily
+                )
             }
         }
 
@@ -422,7 +488,14 @@ fun ProHomeCommandHub(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("Tampilan: ${theme.name}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, maxLines = 1, fontFamily = fontFamily)
+                Text(
+                    "${if (isId) "Tema" else "Theme"}: ${theme.name}",
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    fontFamily = fontFamily
+                )
                 Text(theme.iconGlyph, color = theme.accent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
 

@@ -1,5 +1,6 @@
 package com.shin.framepulse
 
+import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
@@ -9,7 +10,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -29,12 +29,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import rikka.shizuku.Shizuku
+import androidx.core.content.ContextCompat
 
 data class DeviceCapabilities(
     val androidApiLevel: Int,
     val androidApiReady: Boolean,
     val overlayReady: Boolean,
+    val notificationReady: Boolean,
     val shizukuBinderAlive: Boolean,
     val shizukuGranted: Boolean,
     val surfaceFlingerReady: Boolean,
@@ -45,24 +46,21 @@ data class DeviceCapabilities(
 }
 
 object CapabilityEngine {
-    fun inspect(context: Context, telemetry: TelemetryData = TelemetryHub.latest): DeviceCapabilities {
+    fun inspect(
+        context: Context,
+        telemetry: TelemetryData = TelemetryHub.latest,
+        shizukuBinderOverride: Boolean? = null,
+        shizukuGrantedOverride: Boolean? = null
+    ): DeviceCapabilities {
         val api = Build.VERSION.SDK_INT
-        val overlay = try {
-            Settings.canDrawOverlays(context)
-        } catch (_: Throwable) {
-            false
+        val overlay = runCatching { Settings.canDrawOverlays(context) }.getOrDefault(false)
+        val notifOk = if (api >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
         }
-        val binder = try {
-            Shizuku.pingBinder()
-        } catch (_: Throwable) {
-            false
-        }
-        val shizukuOk = try {
-            binder && !Shizuku.isPreV11() &&
-                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-        } catch (_: Throwable) {
-            false
-        }
+        val binder = shizukuBinderOverride ?: ShizukuShell.isBinderAlive()
+        val shizukuOk = shizukuGrantedOverride ?: ShizukuShell.isReady()
         val sfReady = shizukuOk || telemetry.isTrueGameFps
         val gameModeOk = shizukuOk && api >= Build.VERSION_CODES.S
 
@@ -70,6 +68,7 @@ object CapabilityEngine {
             androidApiLevel = api,
             androidApiReady = api >= Build.VERSION_CODES.O,
             overlayReady = overlay,
+            notificationReady = notifOk,
             shizukuBinderAlive = binder,
             shizukuGranted = shizukuOk,
             surfaceFlingerReady = sfReady,
@@ -82,6 +81,7 @@ object CapabilityEngine {
 fun CapabilityStatusCard(
     caps: DeviceCapabilities,
     accent: Color,
+    isId: Boolean = AppStrings.resolveLangCode() == "id",
     onOpenSetup: () -> Unit
 ) {
     val tierColor = if (caps.shizukuGranted) EmeraldNeon else accent
@@ -90,7 +90,7 @@ fun CapabilityStatusCard(
         accentGlow = tierColor
     ) {
         SectionTitle(
-            title = "DEVICE CAPABILITIES",
+            title = if (isId) "STATUS KEMAMPUAN PERANGKAT" else "DEVICE CAPABILITIES",
             badge = caps.tierLabel,
             accent = tierColor,
             iconType = "cpu"
@@ -106,7 +106,7 @@ fun CapabilityStatusCard(
                 modifier = Modifier.weight(1f)
             )
             CapabilityBadgeItem(
-                label = "Shizuku",
+                label = "Shizuku UID 2000",
                 active = caps.shizukuGranted,
                 modifier = Modifier.weight(1f)
             )
@@ -122,7 +122,7 @@ fun CapabilityStatusCard(
                 modifier = Modifier.weight(1f)
             )
             CapabilityBadgeItem(
-                label = "Game Mode",
+                label = "Game Mode HAL",
                 active = caps.gameModeReady,
                 modifier = Modifier.weight(1f)
             )
@@ -131,7 +131,11 @@ fun CapabilityStatusCard(
         if (!caps.shizukuGranted) {
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "Hubungkan Shizuku di tab Setup untuk mengaktifkan Tier 2 (SurfaceFlinger & Game Mode) →",
+                text = if (isId) {
+                    "Hubungkan Shizuku di tab Setup untuk mengaktifkan Tier 2 (True FPS SurfaceFlinger & Game Mode) →"
+                } else {
+                    "Connect Shizuku in the Setup tab to unlock Tier 2 (True SurfaceFlinger FPS & Game Mode) →"
+                },
                 color = TextSecondary,
                 fontSize = 10.5.sp,
                 lineHeight = 14.sp,

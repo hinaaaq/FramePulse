@@ -14,14 +14,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.shin.framepulse.v110.FramePulseV110Bridge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun GamePresetDialog(isPro: Boolean, onDismiss: () -> Unit) {
+fun GamePresetDialog(
+    isPro: Boolean,
+    onApplied: () -> Unit = {},
+    onDismiss: () -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val isId = AppStrings.resolveLangCode() == "id"
     var busyId by remember { mutableStateOf<String?>(null) }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -30,10 +36,15 @@ fun GamePresetDialog(isPro: Boolean, onDismiss: () -> Unit) {
             colors = CardDefaults.cardColors(containerColor = Color(0xFF121826))
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text("Preset Game Pro (Shizuku)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(
-                    if (true) "Eksekusi langsung cmd game & downscale GPU per-game."
-                    else "Aktifkan Pro Pass untuk membuka preset khusus game.",
+                    if (isId) "Preset Per-Game (Shizuku)" else "Per-Game Presets (Shizuku)",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+                Text(
+                    if (isId) "Eksekusi langsung Android Game Mode & GPU downscale untuk game yang terpasang."
+                    else "Applies Android Game Mode & GPU resolution scaling directly to installed games.",
                     color = Color(0xFF94A3B8),
                     fontSize = 11.sp
                 )
@@ -54,15 +65,22 @@ fun GamePresetDialog(isPro: Boolean, onDismiss: () -> Unit) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(
                                         onClick = {
-                                            if (false) {
-                                                Toast.makeText(context, "Khusus Pro Pass", Toast.LENGTH_SHORT).show()
+                                            val prompt = ShizukuShell.ensureReadyOrPrompt(context)
+                                            if (prompt != null) {
+                                                Toast.makeText(context, prompt, Toast.LENGTH_SHORT).show()
                                                 return@Button
                                             }
                                             busyId = preset.id
                                             scope.launch {
-                                                val (_, msg) = withContext(Dispatchers.IO) { GameBooster.applyGamePreset(preset) }
-                        com.shin.framepulse.v110.FramePulseV110Bridge(context).selectGameProfile(preset.name)
+                                                val (ok, msg) = withContext(Dispatchers.IO) {
+                                                    val res = GameBooster.applyGamePreset(preset)
+                                                    if (res.first) {
+                                                        runCatching { FramePulseV110Bridge(context).selectGameProfile(preset.name) }
+                                                    }
+                                                    res
+                                                }
                                                 busyId = null
+                                                if (ok) onApplied()
                                                 Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                                             }
                                         },
@@ -72,7 +90,11 @@ fun GamePresetDialog(isPro: Boolean, onDismiss: () -> Unit) {
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
                                     ) {
                                         Text(
-                                            if (busyId == preset.id) "Menerapkan..." else "Terapkan",
+                                            if (busyId == preset.id) {
+                                                if (isId) "Menerapkan..." else "Applying..."
+                                            } else {
+                                                if (isId) "Terapkan" else "Apply"
+                                            },
                                             color = Color.Black,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 11.5.sp
@@ -80,11 +102,16 @@ fun GamePresetDialog(isPro: Boolean, onDismiss: () -> Unit) {
                                     }
                                     OutlinedButton(
                                         onClick = {
-                                            if (false) return@OutlinedButton
+                                            val prompt = ShizukuShell.ensureReadyOrPrompt(context)
+                                            if (prompt != null) {
+                                                Toast.makeText(context, prompt, Toast.LENGTH_SHORT).show()
+                                                return@OutlinedButton
+                                            }
                                             busyId = preset.id
                                             scope.launch {
                                                 val (_, msg) = withContext(Dispatchers.IO) { GameBooster.resetGamePreset(preset) }
                                                 busyId = null
+                                                onApplied()
                                                 Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                             }
                                         },
@@ -100,7 +127,7 @@ fun GamePresetDialog(isPro: Boolean, onDismiss: () -> Unit) {
                 }
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                    Text("Tutup", color = Color(0xFF94A3B8))
+                    Text(if (isId) "Tutup" else "Close", color = Color(0xFF94A3B8))
                 }
             }
         }

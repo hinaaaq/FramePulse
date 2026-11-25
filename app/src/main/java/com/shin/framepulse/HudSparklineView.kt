@@ -9,22 +9,26 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Shader
 import android.view.View
+import kotlin.math.max
 
 class HudSparklineView(context: Context) : View(context) {
 
+    private val density = resources.displayMetrics.density
+    private fun dp(v: Float): Float = v * density
+
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 6.5f
+        strokeWidth = dp(2.4f)
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
 
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 2.8f
+        strokeWidth = dp(1.2f)
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
-        color = Color.parseColor("#38BDF8")
+        color = 0xFF38BDF8.toInt()
     }
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -41,9 +45,9 @@ class HudSparklineView(context: Context) : View(context) {
 
     private val refLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 1.1f
+        strokeWidth = dp(0.7f)
         color = Color.argb(55, 255, 255, 255)
-        pathEffect = DashPathEffect(floatArrayOf(5f, 5f), 0f)
+        pathEffect = DashPathEffect(floatArrayOf(dp(2.5f), dp(2.5f)), 0f)
     }
 
     private val strokePath = Path()
@@ -52,13 +56,13 @@ class HudSparklineView(context: Context) : View(context) {
     private var cachedShaderColor: Int = 0
 
     private var points: List<Int> = emptyList()
-    private var accentColor: Int = Color.parseColor("#38BDF8")
+    private var accentColor: Int = 0xFF38BDF8.toInt()
     private var maxScaleFps: Int = 90
 
     fun updateData(newPoints: List<Int>, themeColor: Int, scaleMaxFps: Int = 90) {
         points = newPoints
         accentColor = themeColor
-        maxScaleFps = scaleMaxFps.coerceIn(60, 144)
+        maxScaleFps = scaleMaxFps.coerceIn(30, 240)
         linePaint.color = themeColor
         glowPaint.color = Color.argb(65, Color.red(themeColor), Color.green(themeColor), Color.blue(themeColor))
         dotPaint.color = themeColor
@@ -72,23 +76,29 @@ class HudSparklineView(context: Context) : View(context) {
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
 
-        val padY = 4f
+        val haloRadius = dp(2.6f)
+        val dotRadius = dp(1.4f)
+        val padY = max(haloRadius, glowPaint.strokeWidth * 0.5f) + dp(1f)
+        val padX = haloRadius + dp(1f)
+        val usableH = (h - padY * 2f).coerceAtLeast(1f)
+        val usableW = (w - padX * 2f).coerceAtLeast(1f)
+
         val refFps = if (maxScaleFps <= 65) 30f else 60f
-        val yRef = h - ((refFps / maxScaleFps.toFloat()) * (h - padY * 2f)) - padY
+        val yRef = h - ((refFps / maxScaleFps.toFloat()) * usableH) - padY
         canvas.drawLine(0f, yRef, w, yRef, refLinePaint)
 
         if (points.size < 2) return
 
         strokePath.reset()
         fillPath.reset()
-        val stepX = (w - 6f) / (points.size - 1).coerceAtLeast(1)
+        val stepX = usableW / (points.size - 1).coerceAtLeast(1)
 
-        var prevX = 0f
+        var prevX = padX
         var prevY = h
         points.forEachIndexed { idx, fpsVal ->
             val clamped = fpsVal.coerceIn(0, maxScaleFps)
-            val x = idx * stepX + 1f
-            val y = h - ((clamped / maxScaleFps.toFloat()) * (h - padY * 2f)) - padY
+            val x = padX + idx * stepX
+            val y = h - ((clamped / maxScaleFps.toFloat()) * usableH) - padY
             if (idx == 0) {
                 strokePath.moveTo(x, y)
                 fillPath.moveTo(x, h)
@@ -119,7 +129,7 @@ class HudSparklineView(context: Context) : View(context) {
         canvas.drawPath(fillPath, fillPaint)
         canvas.drawPath(strokePath, glowPaint)
         canvas.drawPath(strokePath, linePaint)
-        canvas.drawCircle(prevX, prevY, 5.5f, dotHaloPaint)
-        canvas.drawCircle(prevX, prevY, 2.8f, dotPaint)
+        canvas.drawCircle(prevX, prevY, haloRadius, dotHaloPaint)
+        canvas.drawCircle(prevX, prevY, dotRadius, dotPaint)
     }
 }

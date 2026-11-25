@@ -52,11 +52,25 @@ data class AppUpdateInfo(
 
 object UpdateChecker {
     private const val RELEASES_API = "https://api.github.com/repos/hinaaaq/FramePulse/releases/latest"
+    private const val DEFAULT_RELEASE_URL = "https://github.com/hinaaaq/FramePulse/releases/latest"
+    private val TRUSTED_HOSTS = setOf(
+        "github.com",
+        "objects.githubusercontent.com",
+        "release-assets.githubusercontent.com"
+    )
+
+    fun isTrustedReleaseUrl(rawUrl: String): Boolean {
+        val uri = runCatching { Uri.parse(rawUrl) }.getOrNull() ?: return false
+        if (!uri.scheme.equals("https", ignoreCase = true)) return false
+        val host = uri.host?.lowercase(Locale.US).orEmpty()
+        return host in TRUSTED_HOSTS
+    }
 
     suspend fun checkLatest(
         context: Context,
         ignoreSkipped: Boolean = false
     ): AppUpdateInfo? = withContext(Dispatchers.IO) {
+        var conn: HttpURLConnection? = null
         runCatching {
             val currentVer = try {
                 @Suppress("DEPRECATION")
@@ -65,17 +79,21 @@ object UpdateChecker {
                 "1.0.0"
             }
 
-            val conn = (URL(RELEASES_API).openConnection() as HttpURLConnection).apply {
+            val c = (URL(RELEASES_API).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = 6000
                 readTimeout = 6000
                 setRequestProperty("Accept", "application/vnd.github+json")
                 setRequestProperty("User-Agent", "FramePulse-Android/$currentVer")
             }
-            if (conn.responseCode !in 200..299) return@runCatching null
+            conn = c
+            if (c.responseCode !in 200..299) return@runCatching null
 
-            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            val body = c.inputStream.bufferedReader().use { it.readText() }
             val json = JSONObject(body)
+            if (json.optBoolean("draft", false) || json.optBoolean("prerelease", false)) {
+                return@runCatching null
+            }
             val tagName = json.optString("tag_name", "").trim()
             if (tagName.isBlank()) return@runCatching null
 
@@ -88,7 +106,8 @@ object UpdateChecker {
                 return@runCatching null
             }
 
-            var apkUrl = json.optString("html_url", "https://github.com/hinaaaq/FramePulse/releases/latest")
+            val htmlCandidate = json.optString("html_url", DEFAULT_RELEASE_URL)
+            var apkUrl = if (isTrustedReleaseUrl(htmlCandidate)) htmlCandidate else DEFAULT_RELEASE_URL
             var apkSizeLabel = ""
             val assets = json.optJSONArray("assets")
             if (assets != null) {
@@ -96,7 +115,7 @@ object UpdateChecker {
                     val asset = assets.optJSONObject(i) ?: continue
                     val name = asset.optString("name", "")
                     val dl = asset.optString("browser_download_url", "")
-                    if (name.endsWith(".apk", ignoreCase = true) && dl.startsWith("https://")) {
+                    if (name.endsWith(".apk", ignoreCase = true) && isTrustedReleaseUrl(dl)) {
                         apkUrl = dl
                         val sizeBytes = asset.optLong("size", 0L)
                         if (sizeBytes > 0L) {
@@ -111,7 +130,7 @@ object UpdateChecker {
             val publishedRaw = json.optString("published_at", "").trim()
             val publishedDate = if (publishedRaw.length >= 10) publishedRaw.substring(0, 10) else ""
 
-            val isId = Prefs.hasChosenLanguage && Prefs.appLanguage.equals("id", ignoreCase = true)
+            val isId = AppStrings.resolveLangCode() == "id"
             val fallbackNotes = if (isId) {
                 "Perbaikan performa, stabilitas, dan dukungan perangkat terbaru."
             } else {
@@ -128,6 +147,8 @@ object UpdateChecker {
                 apkSizeLabel = apkSizeLabel,
                 publishedDate = publishedDate
             )
+        }.also {
+            runCatching { conn?.disconnect() }
         }.getOrNull()
     }
 
@@ -146,8 +167,10 @@ object UpdateChecker {
     }
 
     private fun isNewerVersion(latest: String, current: String): Boolean {
-        val lParts = latest.split(".").map { it.filter { c -> c.isDigit() }.toIntOrNull() ?: 0 }
-        val cParts = current.split(".").map { it.filter { c -> c.isDigit() }.toIntOrNull() ?: 0 }
+        val latestCore = latest.substringBefore("-").substringBefore("+")
+        val currentCore = current.substringBefore("-").substringBefore("+")
+        val lParts = latestCore.split(".").map { it.filter { c -> c.isDigit() }.toIntOrNull() ?: 0 }
+        val cParts = currentCore.split(".").map { it.filter { c -> c.isDigit() }.toIntOrNull() ?: 0 }
         val maxLen = maxOf(lParts.size, cParts.size)
         for (i in 0 until maxLen) {
             val l = lParts.getOrElse(i) { 0 }
@@ -166,9 +189,9 @@ fun UpdateAvailableBanner(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    val isId = Prefs.hasChosenLanguage && Prefs.appLanguage.equals("id", ignoreCase = true)
+    val isId = AppStrings.resolveLangCode() == "id"
     val metaParts = buildList {
-        add("${info.currentVersion} -> ${info.latestVersion}")
+        add("${info.currentVersion} → ${info.latestVersion}")
         if (info.apkSizeLabel.isNotBlank()) add(info.apkSizeLabel)
         if (info.publishedDate.isNotBlank()) add(info.publishedDate)
     }
@@ -273,8 +296,13 @@ fun UpdateAvailableBanner(
         confirmButton = {
             Button(
                 onClick = {
+                    val safeUrl = if (UpdateChecker.isTrustedReleaseUrl(info.downloadUrl)) {
+                        info.downloadUrl
+                    } else {
+                        "https://github.com/hinaaaq/FramePulse/releases/latest"
+                    }
                     runCatching {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl)))
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(safeUrl)))
                     }.onFailure {
                         Toast.makeText(
                             context,

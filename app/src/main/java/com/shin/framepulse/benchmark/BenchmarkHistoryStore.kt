@@ -5,6 +5,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.roundToInt
 
+private fun Float.safeFinite(default: Float = 0f): Float = if (isFinite()) this else default
+
 data class BenchmarkSessionRecord(
     val sessionId: String,
     val timestampMs: Long,
@@ -34,23 +36,28 @@ data class BenchmarkComparison(
             "Peak Temp ${tempSign}${fmt1(deltaPeakTempC)}°C"
     }
 
-    private fun fmt1(v: Float): String = ((v * 10f).roundToInt() / 10f).toString()
+    private fun fmt1(v: Float): String = ((v.safeFinite() * 10f).roundToInt() / 10f).toString()
 }
 
 class BenchmarkHistoryStore(context: Context) {
 
-    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    fun saveSession(record: BenchmarkSessionRecord): List<BenchmarkSessionRecord> {
+    fun saveSession(record: BenchmarkSessionRecord): List<BenchmarkSessionRecord> = synchronized(STORE_LOCK) {
+        val cleanRecord = record.copy(
+            avgFps = record.avgFps.safeFinite(),
+            low1PercentFps = record.low1PercentFps.safeFinite(),
+            peakTempC = record.peakTempC.safeFinite()
+        )
         val currentList = loadSessions().toMutableList()
-        currentList.removeAll { it.sessionId == record.sessionId }
-        currentList.add(0, record)
+        currentList.removeAll { it.sessionId == cleanRecord.sessionId }
+        currentList.add(0, cleanRecord)
         val trimmed = currentList.take(MAX_SESSIONS)
         persistSessions(trimmed)
         return trimmed
     }
 
-    fun loadSessions(): List<BenchmarkSessionRecord> {
+    fun loadSessions(): List<BenchmarkSessionRecord> = synchronized(STORE_LOCK) {
         val raw = prefs.getString(KEY_SESSIONS, null) ?: return emptyList()
         return try {
             val arr = JSONArray(raw)
@@ -63,11 +70,11 @@ class BenchmarkHistoryStore(context: Context) {
                         BenchmarkSessionRecord(
                             sessionId = sessionId,
                             timestampMs = obj.optLong("timestampMs", 0L),
-                            gameOrLabel = obj.optString("gameOrLabel", "Unknown Session"),
+                            gameOrLabel = obj.optString("gameOrLabel", "Session"),
                             durationSec = obj.optInt("durationSec", 0),
-                            avgFps = obj.optDouble("avgFps", 0.0).toFloat(),
-                            low1PercentFps = obj.optDouble("low1PercentFps", 0.0).toFloat(),
-                            peakTempC = obj.optDouble("peakTempC", 0.0).toFloat(),
+                            avgFps = obj.optDouble("avgFps", 0.0).toFloat().safeFinite(),
+                            low1PercentFps = obj.optDouble("low1PercentFps", 0.0).toFloat().safeFinite(),
+                            peakTempC = obj.optDouble("peakTempC", 0.0).toFloat().safeFinite(),
                             thermalThrottleDetected = obj.optBoolean("thermalThrottleDetected", false),
                             verified = obj.optBoolean("verified", false)
                         )
@@ -79,7 +86,7 @@ class BenchmarkHistoryStore(context: Context) {
         }
     }
 
-    fun compareWithPrevious(sessionId: String? = null): BenchmarkComparison? {
+    fun compareWithPrevious(sessionId: String? = null): BenchmarkComparison? = synchronized(STORE_LOCK) {
         val sessions = loadSessions()
         if (sessions.size < 2) return null
         val currentIndex = if (sessionId == null) {
@@ -95,13 +102,13 @@ class BenchmarkHistoryStore(context: Context) {
         return BenchmarkComparison(
             current = current,
             baseline = baseline,
-            deltaAvgFps = current.avgFps - baseline.avgFps,
-            deltaLow1PercentFps = current.low1PercentFps - baseline.low1PercentFps,
-            deltaPeakTempC = current.peakTempC - baseline.peakTempC
+            deltaAvgFps = (current.avgFps - baseline.avgFps).safeFinite(),
+            deltaLow1PercentFps = (current.low1PercentFps - baseline.low1PercentFps).safeFinite(),
+            deltaPeakTempC = (current.peakTempC - baseline.peakTempC).safeFinite()
         )
     }
 
-    fun clearHistory() {
+    fun clearHistory() = synchronized(STORE_LOCK) {
         prefs.edit().remove(KEY_SESSIONS).apply()
     }
 
@@ -113,9 +120,9 @@ class BenchmarkHistoryStore(context: Context) {
                 put("timestampMs", item.timestampMs)
                 put("gameOrLabel", item.gameOrLabel)
                 put("durationSec", item.durationSec)
-                put("avgFps", item.avgFps.toDouble())
-                put("low1PercentFps", item.low1PercentFps.toDouble())
-                put("peakTempC", item.peakTempC.toDouble())
+                put("avgFps", item.avgFps.safeFinite().toDouble())
+                put("low1PercentFps", item.low1PercentFps.safeFinite().toDouble())
+                put("peakTempC", item.peakTempC.safeFinite().toDouble())
                 put("thermalThrottleDetected", item.thermalThrottleDetected)
                 put("verified", item.verified)
             }
@@ -125,6 +132,7 @@ class BenchmarkHistoryStore(context: Context) {
     }
 
     companion object {
+        private val STORE_LOCK = Any()
         private const val PREFS_NAME = "framepulse_benchmark_history"
         private const val KEY_SESSIONS = "sessions_json_v1"
         private const val MAX_SESSIONS = 20

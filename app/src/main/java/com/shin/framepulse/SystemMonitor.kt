@@ -4,16 +4,17 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.pm.PackageManager
+import android.content.pm.ApplicationInfo
 import android.hardware.display.DisplayManager
 import android.net.TrafficStats
 import android.os.BatteryManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.view.Choreographer
 import android.view.Display
-import rikka.shizuku.Shizuku
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.File
@@ -22,6 +23,10 @@ import java.io.OutputStreamWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -35,6 +40,7 @@ data class CoreInfo(
 
 data class TelemetryData(
     val fps: Int = 0,
+    val onePercentLowFps: Int = 0,
     val frameTimeMs: Float = 0f,
     val isTrueGameFps: Boolean = false,
     val activeSurfaceName: String = "",
@@ -46,6 +52,7 @@ data class TelemetryData(
     val ramUsedGb: Float = 0f,
     val ramTotalGb: Float = 0f,
     val batteryTempC: Float = 0f,
+    val thermalStatus: Int = 0,
     val batteryPercent: Int = 0,
     val isCharging: Boolean = false,
     val powerWatts: Float = 0f,
@@ -68,7 +75,15 @@ data class BenchmarkSummary(
 
 object TelemetryHub {
     @Volatile var latest: TelemetryData = TelemetryData()
-    val fpsHistory: MutableList<Int> = mutableListOf()
+
+    private val _fpsHistory = ArrayDeque<Int>(64)
+    val fpsHistory: List<Int>
+        get() = getFpsHistorySnapshot()
+
+    fun getFpsHistorySnapshot(): List<Int> = synchronized(_fpsHistory) { _fpsHistory.toList() }
+
+    @Volatile var lastSessionSamples: List<Int> = emptyList()
+        private set
 
     @Volatile var isRecording: Boolean = false
     @Volatile var recordingStartMs: Long = 0L
@@ -81,6 +96,43 @@ object TelemetryHub {
     private val recordedFrameTimesMs = mutableListOf<Float>()
     private var peakRecordedTemp = 0f
     private var usedTrueFpsInSession = false
+
+    private val gamePkgCache = ConcurrentHashMap<String, Boolean>()
+    private val nonGameUtilityPkgs = setOf(
+        "com.whatsapp",
+        "com.whatsapp.w4b",
+        "org.telegram.messenger",
+        "com.instagram.android",
+        "com.facebook.katana",
+        "com.facebook.orca",
+        "com.google.android.youtube",
+        "com.android.chrome",
+        "com.google.android.gm",
+        "com.shopee.id",
+        "com.tokopedia.tkpd"
+    )
+
+    fun isLikelyGamePackage(context: Context, pkg: String): Boolean {
+        val clean = ShizukuShell.sanitizePackage(pkg)
+        if (clean.isEmpty() || GameBooster.isSystemOrSelfPkg(clean) || clean in nonGameUtilityPkgs) {
+            return false
+        }
+        if (clean in GameProfileEngine.allKnownGamePackages || clean == Prefs.lastGamePackage) {
+            return true
+        }
+        return gamePkgCache.getOrPut(clean) {
+            runCatching {
+                @Suppress("DEPRECATION")
+                val info = context.packageManager.getApplicationInfo(clean, 0)
+                val byCat = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    info.category == ApplicationInfo.CATEGORY_GAME
+                } else false
+                @Suppress("DEPRECATION")
+                val byFlag = (info.flags and ApplicationInfo.FLAG_IS_GAME) != 0
+                byCat || byFlag
+            }.getOrDefault(false)
+        }
+    }
 
     fun getRecordingElapsedSec(): Int {
         if (!isRecording || recordingStartMs <= 0L) return 0
@@ -104,12 +156,12 @@ object TelemetryHub {
             if (!isRecording) return
             usedTrueFpsInSession = true
             for (ft in frameTimesMs) {
-                if (ft in 2f..250f) {
+                if (ft.isFinite() && ft in 1.5f..2500f) {
                     recordedFrameTimesMs.add(ft)
                 }
             }
-            if (recordedFrameTimesMs.size > 12000) {
-                recordedFrameTimesMs.subList(0, recordedFrameTimesMs.size - 12000).clear()
+            if (recordedFrameTimesMs.size > 18000) {
+                recordedFrameTimesMs.subList(0, recordedFrameTimesMs.size - 18000).clear()
             }
         }
     }
@@ -121,6 +173,12 @@ object TelemetryHub {
             recordingStartMs = 0L
             if (recordedFps.isEmpty() && recordedFrameTimesMs.isEmpty()) return null
 
+            lastSessionSamples = if (recordedFps.isNotEmpty()) {
+                recordedFps.toList()
+            } else {
+                recordedFrameTimesMs.map { (1000f / it.coerceAtLeast(1f)).roundToInt().coerceIn(1, 240) }
+            }
+
             val avg: Float
             val onePctLow: Int
             val minFps: Int
@@ -129,12 +187,12 @@ object TelemetryHub {
             if (recordedFrameTimesMs.size >= 15) {
                 val sortedFt = recordedFrameTimesMs.sorted()
                 val avgFt = sortedFt.average().toFloat().coerceAtLeast(1f)
-                avg = (1000f / avgFt).coerceIn(1f, 144f)
+                avg = (1000f / avgFt).coerceIn(1f, 240f)
                 val worstCount = maxOf(1, (sortedFt.size * 0.01).toInt())
                 val worstAvgFt = sortedFt.takeLast(worstCount).average().toFloat().coerceAtLeast(1f)
-                onePctLow = (1000f / worstAvgFt).roundToInt().coerceIn(1, 144)
-                minFps = (1000f / sortedFt.last().coerceAtLeast(1f)).roundToInt().coerceIn(1, 144)
-                maxFps = (1000f / sortedFt.first().coerceAtLeast(1f)).roundToInt().coerceIn(1, 144)
+                onePctLow = (1000f / worstAvgFt).roundToInt().coerceIn(1, 240)
+                minFps = (1000f / sortedFt.last().coerceAtLeast(1f)).roundToInt().coerceIn(1, 240)
+                maxFps = (1000f / sortedFt.first().coerceAtLeast(1f)).roundToInt().coerceIn(1, 240)
             } else {
                 val sorted = recordedFps.sorted()
                 avg = sorted.average().toFloat()
@@ -152,7 +210,7 @@ object TelemetryHub {
                 onePercentLowFps = onePctLow,
                 minFps = minFps,
                 maxFps = maxFps,
-                peakTempC = peakRecordedTemp,
+                peakTempC = peakRecordedTemp.coerceAtLeast(latest.batteryTempC),
                 sourceLabel = if (usedTrueFpsInSession) "SF" else "STD"
             )
             lastSummary = summary
@@ -186,6 +244,7 @@ object TelemetryHub {
 
     fun clearHistory() {
         lastSummary = null
+        lastSessionSamples = emptyList()
         try { Prefs.benchmarkHistoryRaw = "" } catch (_: Throwable) {}
     }
 
@@ -193,7 +252,7 @@ object TelemetryHub {
         try {
             val current = loadHistory().toMutableList()
             current.add(0, item)
-            val trimmed = current.take(8)
+            val trimmed = current.take(12)
             val serialized = trimmed.joinToString("\n") {
                 listOf(
                     it.timestamp,
@@ -212,10 +271,10 @@ object TelemetryHub {
 
     fun publish(data: TelemetryData) {
         latest = data
-        synchronized(fpsHistory) {
-            fpsHistory.add(data.fps)
-            if (fpsHistory.size > 60) {
-                fpsHistory.removeAt(0)
+        synchronized(_fpsHistory) {
+            _fpsHistory.addLast(data.fps)
+            while (_fpsHistory.size > 60) {
+                _fpsHistory.removeFirst()
             }
         }
         if (isRecording && data.fps > 0) {
@@ -236,8 +295,16 @@ class SystemMonitor(private val context: Context) {
     private val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
     private val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
     private val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+    private val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
     private val mainHandler = Handler(Looper.getMainLooper())
     private val shellLock = Any()
+    private val cmdSeq = AtomicLong(0L)
+
+    companion object {
+        private val shellWatchdog = Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "FramePulse-MonitorWatchdog").apply { isDaemon = true }
+        }
+    }
 
     @Volatile private var running = false
     @Volatile private var choreographerActive = false
@@ -257,8 +324,11 @@ class SystemMonitor(private val context: Context) {
     private var lastPresentNs = 0L
     private var lastSfQueryMs = 0L
     private var sfFps = 0
+    private var sfOnePctLow = 0
     private var sfFrameMs = 0f
-    private val pkgRegex = Regex("""\b([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)/""")
+    private val rollingFrameTimesMs = ArrayDeque<Float>(240)
+    private val pkgRegex = Regex("""\b([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)+)/""")
+    private val firstIntRegex = Regex("""(\d+)""")
 
     private var lastCpuQueryMs = 0L
     private var cachedCpuLoad = 0
@@ -266,7 +336,7 @@ class SystemMonitor(private val context: Context) {
     private var cachedCpuMaxGhz = 0f
     private var cachedGpuLoad: Int? = null
     private var discoveredGpuPath: String? = null
-    private var gpuScanAttempts = 0
+    private var lastGpuScanMs = 0L
     private var lastAutoBoostedPkg: String? = null
     private var cachedCores: List<CoreInfo> = emptyList()
     private var prevTotalCpu = 0L
@@ -276,10 +346,12 @@ class SystemMonitor(private val context: Context) {
     private var cachedRamUsed = 0f
     private var cachedRamTotal = 0f
     private var cachedTempC = 0f
+    private var cachedThermalStatus = 0
     private var cachedBattPct = 0
     private var cachedIsCharging = false
     private var cachedWatts = 0f
     private var cachedCurrentMa = 0
+    private var currentInMicroAmps: Boolean = !Build.MANUFACTURER.equals("samsung", ignoreCase = true)
     private var cachedDownKbps = 0f
     private var cachedUpKbps = 0f
     private var prevRxBytes = -1L
@@ -287,15 +359,6 @@ class SystemMonitor(private val context: Context) {
     private var prevNetMs = 0L
 
     private val coreCount: Int = Runtime.getRuntime().availableProcessors().coerceIn(1, 16)
-
-    private val newProcessMethod by lazy {
-        Shizuku::class.java.getDeclaredMethod(
-            "newProcess",
-            Array<String>::class.java,
-            Array<String>::class.java,
-            String::class.java
-        ).apply { isAccessible = true }
-    }
 
     private val frameCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
@@ -352,26 +415,12 @@ class SystemMonitor(private val context: Context) {
         } catch (_: Throwable) {
             60f
         }
-        return rate.roundToInt().coerceIn(60, 144)
+        return rate.roundToInt().coerceIn(60, 240)
     }
 
-    fun isShizukuBinderAlive(): Boolean {
-        return try {
-            Shizuku.pingBinder()
-        } catch (_: Throwable) {
-            false
-        }
-    }
+    fun isShizukuBinderAlive(): Boolean = ShizukuShell.isBinderAlive()
 
-    fun isShizukuReady(): Boolean {
-        return try {
-            Shizuku.pingBinder() &&
-                !Shizuku.isPreV11() &&
-                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-        } catch (_: Throwable) {
-            false
-        }
-    }
+    fun isShizukuReady(): Boolean = ShizukuShell.isReady()
 
     private fun ensureShell(): Boolean = synchronized(shellLock) {
         if (!isShizukuReady()) {
@@ -387,7 +436,6 @@ class SystemMonitor(private val context: Context) {
             } catch (_: IllegalThreadStateException) {
                 true
             } catch (e: IllegalArgumentException) {
-                // Over Android Binder IPC, IllegalThreadStateException is deserialized as IllegalArgumentException
                 if (e.message?.contains("hasn't exited", ignoreCase = true) == true) {
                     true
                 } else {
@@ -404,7 +452,8 @@ class SystemMonitor(private val context: Context) {
 
     private fun openShellInternal(): Boolean {
         return try {
-            val proc = newProcessMethod.invoke(null, arrayOf("sh"), null, null) as Process
+            val proc = ShizukuShell.openPersistentShell() ?: return false
+            runCatching { proc.errorStream.close() }
             shellProcess = proc
             shellWriter = BufferedWriter(OutputStreamWriter(proc.outputStream))
             shellReader = BufferedReader(InputStreamReader(proc.inputStream))
@@ -416,7 +465,6 @@ class SystemMonitor(private val context: Context) {
     }
 
     private fun closeShell() {
-        // Destroy process first outside lock so any blocked readLine() unblocks immediately without UI ANR
         val proc = shellProcess
         if (proc != null) {
             try { proc.destroy() } catch (_: Throwable) {}
@@ -439,21 +487,31 @@ class SystemMonitor(private val context: Context) {
     }
 
     private fun runShellCmd(cmd: String): List<String> = synchronized(shellLock) {
+        val proc = shellProcess ?: return emptyList()
         val writer = shellWriter ?: return emptyList()
         val reader = shellReader ?: return emptyList()
+        val sentinel = "__FP_END_${cmdSeq.incrementAndGet()}_${SystemClock.elapsedRealtimeNanos()}__"
+        val timer = shellWatchdog.schedule({
+            runCatching { proc.destroy() }
+        }, 3_500L, TimeUnit.MILLISECONDS)
+
         return try {
-            writer.write("{ $cmd ; } 2>/dev/null\nprintf '\\n__FP_END__\\n'\n")
+            writer.write("{ $cmd ; } 2>/dev/null\nprintf '\\n%s\\n' '$sentinel'\n")
             writer.flush()
             val out = ArrayList<String>(132)
             while (true) {
                 val line = reader.readLine() ?: break
-                if (line == "__FP_END__") break
-                out.add(line)
+                if (line == sentinel) break
+                if (out.size < 2048) {
+                    out.add(line)
+                }
             }
             out
         } catch (_: Throwable) {
             closeShellInternal()
             emptyList()
+        } finally {
+            timer.cancel(false)
         }
     }
 
@@ -470,12 +528,13 @@ class SystemMonitor(private val context: Context) {
         return shortName.take(22)
     }
 
+    /**
+     * Returns the actual focused foreground app package (including Home launchers and FramePulse itself),
+     * skipping only floating system overlays, keyboards, and sidebars.
+     */
     private fun detectForegroundPackage(): String? {
-        val ignoredPkgs = setOf(
-            "com.shin.framepulse",
+        val overlayOnlyPkgs = setOf(
             "com.android.systemui",
-            "com.sec.android.app.launcher",
-            "com.google.android.apps.nexuslauncher",
             "com.samsung.android.app.cocktailbarservice",
             "com.samsung.android.game.gametools",
             "com.samsung.android.app.smartcapture",
@@ -486,14 +545,13 @@ class SystemMonitor(private val context: Context) {
             for (line in lines) {
                 if (preferPrefix != null && !line.contains(preferPrefix)) continue
                 val match = pkgRegex.find(line) ?: continue
-                val pkg = match.groupValues[1]
-                if (pkg !in ignoredPkgs && !pkg.startsWith("com.android.systemui")) {
+                val pkg = ShizukuShell.sanitizePackage(match.groupValues[1])
+                if (pkg.isNotEmpty() && pkg !in overlayOnlyPkgs && !pkg.startsWith("com.android.systemui")) {
                     return pkg
                 }
             }
             return null
         }
-        // Prefer mFocusedApp (actual fullscreen Activity/Game) before mCurrentFocus (which can be a floating bubble/IME)
         val winLines = runShellCmd("dumpsys window displays | grep -E 'mFocusedApp|mCurrentFocus'")
         extractFromLines(winLines, "mFocusedApp")?.let { return it }
         val actLines = runShellCmd("dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity'")
@@ -539,13 +597,13 @@ class SystemMonitor(private val context: Context) {
 
     private fun isExcludedLayer(line: String): Boolean {
         val excluded = listOf(
-            "Background for", "Bounds for", "Container", "RelativeParent",
+            "Background for", "Bounds for", "RelativeParent",
             "FramePulse", "com.shin.framepulse", "NavigationBar", "StatusBar",
             "ScreenDecor", "Wallpaper", "NotificationShade", "InputMethod",
             "Taskbar", "Dim Layer", "Letterbox", "Transition", "Splash Screen",
             "cocktailbarservice", "gametools", "systemui", "launcher",
             "edgepanel", "smartcapture", "Screenshot", "Toast", "PopupWindow",
-            "assist", "floating", "pip"
+            "AssistOverlay", "PipMenu", "PipContent", "MagnificationOverlay"
         )
         return excluded.any { bad -> line.contains(bad, ignoreCase = true) }
     }
@@ -554,13 +612,20 @@ class SystemMonitor(private val context: Context) {
         val fgPkg = detectForegroundPackage()
         activeForegroundPkg = fgPkg
         TelemetryHub.activeForegroundPkg = fgPkg
+
+        // Do not lock onto SurfaceFlinger layers when user is inside FramePulse or Home Launcher
+        val isFgTargetApp = fgPkg != null && !GameBooster.isSystemOrSelfPkg(fgPkg)
+        if (fgPkg != null && GameBooster.isSystemOrSelfPkg(fgPkg)) {
+            return null
+        }
+
         val allLayers = runShellCmd("dumpsys SurfaceFlinger --list")
             .map { normalizeLayerName(it) }
             .filter { it.isNotEmpty() && !isExcludedLayer(it) }
         if (allLayers.isEmpty()) return null
 
         val candidates = LinkedHashSet<String>()
-        if (fgPkg != null) {
+        if (isFgTargetApp && fgPkg != null) {
             allLayers.filter { it.contains(fgPkg) && it.contains("SurfaceView") && it.contains("BLAST") }.asReversed().forEach { candidates.add(it) }
             allLayers.filter { it.contains(fgPkg) && it.contains("SurfaceView") }.asReversed().forEach { candidates.add(it) }
             allLayers.filter { it.contains(fgPkg) && it.contains("BLAST") }.asReversed().forEach { candidates.add(it) }
@@ -585,7 +650,7 @@ class SystemMonitor(private val context: Context) {
             val ts = parseLatencyTimestamps(runShellCmd("dumpsys SurfaceFlinger --latency '$safe'"))
             if (ts.size < 2) continue
             val newest = ts.last()
-            val isFg = fgPkg != null && cand.contains(fgPkg)
+            val isFg = isFgTargetApp && fgPkg != null && cand.contains(fgPkg)
             val isFresh = (abs(monoNs - newest) <= 2_000_000_000L) || (abs(bootNs - newest) <= 2_000_000_000L)
 
             val isBetter = when {
@@ -602,7 +667,6 @@ class SystemMonitor(private val context: Context) {
                 bestNewestNs = newest
                 bestIsFg = isFg
                 bestIsFresh = isFresh
-                // Only fast-break when a foreground SurfaceView is confirmed actively rendering right now
                 if (isFg && isFresh && cand.contains("SurfaceView") && ts.size >= 5) break
             }
         }
@@ -610,21 +674,25 @@ class SystemMonitor(private val context: Context) {
     }
 
     fun dumpSurfaceFlingerDiagnostics(): String {
-        if (!isShizukuReady()) return "Shizuku belum aktif / izin belum diberikan."
-        val useOwnShell = !ensureShell()
-        if (useOwnShell) return "Gagal membuka shell Shizuku."
+        val isId = AppStrings.resolveLangCode() == "id"
+        if (!isShizukuReady()) {
+            return if (isId) "Shizuku belum aktif / izin belum diberikan." else "Shizuku is not active or permission not granted."
+        }
+        if (!ensureShell()) {
+            return if (isId) "Gagal membuka shell Shizuku." else "Failed to open Shizuku shell."
+        }
         return buildString {
             val fg = detectForegroundPackage() ?: TelemetryHub.activeForegroundPkg
             val locked = activeGameLayer ?: TelemetryHub.activeLockedLayer
             appendLine("Foreground Pkg: ${fg ?: "(none)"}")
             appendLine("Locked Layer: ${locked ?: "(none)"}")
             appendLine("Display Hz: ${detectDisplayRefreshHz()}Hz")
-            appendLine("Latest HUD FPS: ${TelemetryHub.latest.fps} (isTrue=${TelemetryHub.latest.isTrueGameFps})")
-            appendLine("CPU Source: ${TelemetryHub.latest.cpuSource} | GPU: ${TelemetryHub.latest.gpuLoadPercent ?: "N/A"}")
+            appendLine("Latest HUD FPS: ${TelemetryHub.latest.fps} | 1% Low: ${TelemetryHub.latest.onePercentLowFps} (isTrue=${TelemetryHub.latest.isTrueGameFps})")
+            appendLine("CPU Source: ${TelemetryHub.latest.cpuSource} | GPU: ${TelemetryHub.latest.gpuLoadPercent ?: "N/A"} | ThermalState: ${TelemetryHub.latest.thermalStatus}")
             appendLine("--- Focus ---")
             runShellCmd("dumpsys window displays | grep -E 'mCurrentFocus|mFocusedApp'").take(4).forEach { appendLine(it.trim()) }
             appendLine("--- SurfaceFlinger Layers (filtered) ---")
-            val layers = runShellCmd("dumpsys SurfaceFlinger --list").map { normalizeLayerName(it) }
+            val layers = runShellCmd("dumpsys SurfaceFlinger --list")
                 .map { normalizeLayerName(it) }
                 .filter { it.contains("SurfaceView") || it.contains("BLAST") || (fg != null && it.contains(fg)) }
             layers.takeLast(15).forEach { appendLine(it) }
@@ -636,29 +704,37 @@ class SystemMonitor(private val context: Context) {
         }
     }
 
+    private fun computeRollingOnePercentLow(fallbackFps: Int, maxHz: Int): Int {
+        if (rollingFrameTimesMs.size < 8) return fallbackFps
+        val sorted = rollingFrameTimesMs.sorted()
+        val worstCount = maxOf(1, (sorted.size * 0.01).toInt())
+        val worstAvgMs = sorted.takeLast(worstCount).average().toFloat().coerceAtLeast(1f)
+        return (1000f / worstAvgMs).roundToInt().coerceIn(1, maxHz)
+    }
+
     private fun querySurfaceFlingerFps(nowMs: Long, maxHz: Int): Boolean {
-        if (!ensureShell()) return false
+        if (!ensureShell()) {
+            TelemetryHub.activeForegroundPkg = null
+            return false
+        }
 
         var validTimestamps: List<Long>? = null
         val lockedLayer = activeGameLayer
         val layerSilent = lastSfQueryMs > 0L && (nowMs - lastSfQueryMs >= 1500L)
-
         var needFullScan = lockedLayer == null || layerSilent
 
-        // While locked game layer is actively producing frames, minimize system_server overhead (re-check every 12s)
-        if (!needFullScan && lockedLayer != null && (nowMs - lastFocusCheckMs >= 12000L)) {
+        val focusIntervalMs = if (Prefs.autoShowHudInGames) 1500L else 8000L
+        if (!needFullScan && lockedLayer != null && (nowMs - lastFocusCheckMs >= focusIntervalMs)) {
             lastFocusCheckMs = nowMs
             val currentFg = detectForegroundPackage()
-            if (currentFg != null) {
-                activeForegroundPkg = currentFg
-                TelemetryHub.activeForegroundPkg = currentFg
-                if (!lockedLayer.contains(currentFg)) {
-                    needFullScan = true
-                }
+            activeForegroundPkg = currentFg
+            TelemetryHub.activeForegroundPkg = currentFg
+            if (currentFg == null || GameBooster.isSystemOrSelfPkg(currentFg) || !lockedLayer.contains(currentFg)) {
+                needFullScan = true
             }
         }
 
-        if (needFullScan && (lockedLayer == null || nowMs - lastLayerScanMs >= 1500L)) {
+        if (needFullScan && (lockedLayer == null || nowMs - lastLayerScanMs >= 1200L)) {
             lastLayerScanMs = nowMs
             lastFocusCheckMs = nowMs
             val scanned = scanBestActiveLayer()
@@ -670,11 +746,11 @@ class SystemMonitor(private val context: Context) {
                     TelemetryHub.activeLockedLayer = foundLayer
                     lastPresentNs = 0L
                     lastSfQueryMs = 0L
-                    val detectedPkg = activeForegroundPkg
-                    if (!detectedPkg.isNullOrBlank() &&
-                        foundLayer.contains("SurfaceView") &&
-                        detectedPkg.matches(Regex("^[a-zA-Z0-9_.]+$")) &&
-                        detectedPkg != "com.shin.framepulse"
+                    rollingFrameTimesMs.clear()
+                    val detectedPkg = ShizukuShell.sanitizePackage(activeForegroundPkg)
+                    if (detectedPkg.isNotEmpty() &&
+                        !GameBooster.isSystemOrSelfPkg(detectedPkg) &&
+                        (foundLayer.contains("SurfaceView") || TelemetryHub.isLikelyGamePackage(context, detectedPkg))
                     ) {
                         Prefs.lastGamePackage = detectedPkg
                         if (Prefs.turboAutoBoost && lastAutoBoostedPkg != detectedPkg) {
@@ -688,6 +764,7 @@ class SystemMonitor(private val context: Context) {
                 activeGameLayer = null
                 activeSurfaceLabel = ""
                 TelemetryHub.activeLockedLayer = null
+                rollingFrameTimesMs.clear()
                 return false
             }
         }
@@ -715,6 +792,7 @@ class SystemMonitor(private val context: Context) {
                 if (spanNs > 50_000_000L) {
                     val est = (((window.size - 1) * 1_000_000_000.0) / spanNs).roundToInt().coerceIn(1, maxHz)
                     sfFps = est
+                    sfOnePctLow = est
                     sfFrameMs = 1000f / est
                 }
             }
@@ -722,8 +800,9 @@ class SystemMonitor(private val context: Context) {
         }
 
         if (newestNs <= lastPresentNs) {
-            if (lastSfQueryMs > 0L && nowMs - lastSfQueryMs > 1200L) {
+            if (lastSfQueryMs > 0L && nowMs - lastSfQueryMs > 900L) {
                 sfFps = 0
+                sfOnePctLow = 0
                 sfFrameMs = 0f
             }
             return true
@@ -735,34 +814,37 @@ class SystemMonitor(private val context: Context) {
             var prev = lastPresentNs
             for (ts in freshTimestamps) {
                 val dtMs = (ts - prev) / 1_000_000f
-                if (dtMs in 2f..250f) {
+                if (dtMs in 1.5f..2500f) {
                     frameTimes.add(dtMs)
+                    rollingFrameTimesMs.addLast(dtMs)
+                    while (rollingFrameTimesMs.size > 240) {
+                        rollingFrameTimesMs.removeFirst()
+                    }
                 }
                 prev = ts
             }
+            lastPresentNs = newestNs
+            lastSfQueryMs = nowMs
+
             if (frameTimes.isNotEmpty()) {
                 TelemetryHub.recordFrameTimes(frameTimes)
             }
 
-            // Rolling 1-second window over SurfaceFlinger timestamps for accurate, jitter-free FPS
             val window = validTimestamps.filter { it >= newestNs - 1_000_000_000L }
             val measured: Int? = if (window.size >= 2) {
                 val spanNs = window.last() - window.first()
-                if (spanNs > 50_000_000L) {
+                if (spanNs > 40_000_000L) {
                     (((window.size - 1) * 1_000_000_000.0) / spanNs).roundToInt().coerceIn(1, maxHz)
                 } else null
-            } else {
-                val deltaNs = newestNs - lastPresentNs
-                if (deltaNs > 0L) {
-                    ((freshTimestamps.size * 1_000_000_000.0) / deltaNs).roundToInt().coerceIn(1, maxHz)
-                } else null
-            }
+            } else if (frameTimes.isNotEmpty()) {
+                val avgDt = frameTimes.average().toFloat().coerceAtLeast(1f)
+                (1000f / avgDt).roundToInt().coerceIn(1, maxHz)
+            } else null
 
             if (measured != null) {
                 sfFps = measured
                 sfFrameMs = if (frameTimes.isNotEmpty()) frameTimes.average().toFloat() else (1000f / measured)
-                lastPresentNs = newestNs
-                lastSfQueryMs = nowMs
+                sfOnePctLow = computeRollingOnePercentLow(measured, maxHz)
             }
         }
         return true
@@ -774,9 +856,10 @@ class SystemMonitor(private val context: Context) {
         val maxHz = detectDisplayRefreshHz()
 
         val trueFpsOk = querySurfaceFlingerFps(nowMs, maxHz)
-        setChoreographerEnabled(!trueFpsOk)
+        setChoreographerEnabled(!trueFpsOk && (fg || Prefs.showFps))
         val fps = if (trueFpsOk) sfFps else choreoFps
         val frameMs = if (trueFpsOk) sfFrameMs else choreoFrameMs
+        val onePctLow = if (trueFpsOk) sfOnePctLow else fps
 
         if (nowMs - lastCpuQueryMs >= 1000L || lastCpuQueryMs == 0L) {
             lastCpuQueryMs = nowMs
@@ -785,18 +868,21 @@ class SystemMonitor(private val context: Context) {
                 cachedCpuMaxGhz = (cachedCores.maxOfOrNull { it.curMhz } ?: 0) / 1000f
             }
             if (fg || Prefs.showCpu) cachedCpuLoad = readCpuLoad()
-            if (fg || Prefs.showGpu) cachedGpuLoad = readGpuLoad()
+            if (fg || Prefs.showGpu) cachedGpuLoad = readGpuLoad(nowMs)
         }
 
         if (nowMs - lastSlowQueryMs >= 2000L || lastSlowQueryMs == 0L) {
             lastSlowQueryMs = nowMs
             if (fg || Prefs.showRam) readRam()
-            if (fg || Prefs.showTemp || Prefs.showWatt || Prefs.showBatteryPct) readBatteryAndThermal()
+            if (fg || Prefs.showTemp || Prefs.showWatt || Prefs.showBatteryPct || Prefs.thermalWarningEnabled) {
+                readBatteryAndThermal()
+            }
             if (fg || Prefs.showNet) readNetwork(nowMs)
         }
 
         val data = TelemetryData(
             fps = fps,
+            onePercentLowFps = onePctLow,
             frameTimeMs = frameMs,
             isTrueGameFps = trueFpsOk,
             activeSurfaceName = activeSurfaceLabel,
@@ -808,6 +894,7 @@ class SystemMonitor(private val context: Context) {
             ramUsedGb = cachedRamUsed,
             ramTotalGb = cachedRamTotal,
             batteryTempC = cachedTempC,
+            thermalStatus = cachedThermalStatus,
             batteryPercent = cachedBattPct,
             isCharging = cachedIsCharging,
             powerWatts = cachedWatts,
@@ -863,8 +950,7 @@ class SystemMonitor(private val context: Context) {
         } catch (_: Throwable) {}
 
         if (ensureShell()) {
-            val lines = runShellCmd("head -n 1 /proc/stat")
-            val first = lines.firstOrNull()
+            val first = runShellCmd("head -n 1 /proc/stat").firstOrNull()
             if (!first.isNullOrBlank()) {
                 parseProcStatLine(first)?.let {
                     cachedCpuSource = "SHIZUKU"
@@ -880,14 +966,21 @@ class SystemMonitor(private val context: Context) {
         return cachedCpuLoad
     }
 
-    private fun readGpuLoad(): Int? {
+    private fun extractFirstPercent(raw: String?): Int? {
+        if (raw.isNullOrBlank()) return null
+        val m = firstIntRegex.find(raw) ?: return null
+        return m.groupValues[1].toIntOrNull()?.coerceIn(0, 100)
+    }
+
+    private fun readGpuLoad(nowMs: Long): Int? {
         val candidatePaths = listOf(
             "/sys/kernel/ged/hal/gpu_utilization",
             "/sys/module/ged/parameters/gpu_loading",
+            "/sys/kernel/ged/hal/dvfs_loading",
+            "/sys/devices/platform/13000000.mali/utilization",
             "/sys/class/misc/mali0/device/utilization",
             "/proc/mali/utilization",
             "/sys/class/kgsl/kgsl-3d0/gpu_busy_percentage",
-            "/sys/devices/platform/13000000.mali/utilization",
             "/sys/kernel/gpu/gpu_busy"
         )
 
@@ -896,10 +989,10 @@ class SystemMonitor(private val context: Context) {
             try {
                 val f = File(path)
                 if (f.exists() && f.canRead()) {
-                    val raw = f.readText().trim().split(Regex("[\\s%,]+")).firstOrNull()?.toIntOrNull()
-                    if (raw != null) {
+                    val parsed = extractFirstPercent(f.readText())
+                    if (parsed != null) {
                         discoveredGpuPath = path
-                        return raw.coerceIn(0, 100)
+                        return parsed
                     }
                 }
             } catch (_: Throwable) {}
@@ -908,19 +1001,23 @@ class SystemMonitor(private val context: Context) {
         if (ensureShell()) {
             val known = discoveredGpuPath
             if (known != null) {
-                val out = runShellCmd("cat '$known'")
-                val parsed = out.firstOrNull()?.trim()?.split(Regex("[\\s%,]+"))?.firstOrNull()?.toIntOrNull()
-                if (parsed != null) return parsed.coerceIn(0, 100)
-            } else if (gpuScanAttempts < 3) {
-                gpuScanAttempts++
-                val cmd = "for p in " + candidatePaths.joinToString(" ") + "; do if [ -r \"\$p\" ]; then echo \"\$p\"; cat \"\$p\"; break; fi; done"
-                val out = runShellCmd(cmd)
-                if (out.size >= 2) {
-                    val path = out[0].trim()
-                    val parsed = out[1].trim().split(Regex("[\\s%,]+")).firstOrNull()?.toIntOrNull()
+                val safe = known.replace("'", "'\\''")
+                val out = runShellCmd("cat '$safe'").joinToString(" ")
+                extractFirstPercent(out)?.let { return it }
+                discoveredGpuPath = null
+            }
+            if (lastGpuScanMs == 0L || nowMs - lastGpuScanMs >= 30_000L) {
+                lastGpuScanMs = nowMs
+                val cmd = "for p in " + candidatePaths.joinToString(" ") +
+                    "; do if [ -r \"\$p\" ]; then v=\$(head -n 1 \"\$p\" 2>/dev/null); [ -n \"\$v\" ] && echo \"\$p|\$v\"; fi; done"
+                for (line in runShellCmd(cmd)) {
+                    val sep = line.indexOf('|')
+                    if (sep <= 0) continue
+                    val path = line.substring(0, sep).trim()
+                    val parsed = extractFirstPercent(line.substring(sep + 1))
                     if (parsed != null) {
                         discoveredGpuPath = path
-                        return parsed.coerceIn(0, 100)
+                        return parsed
                     }
                 }
             }
@@ -928,34 +1025,38 @@ class SystemMonitor(private val context: Context) {
         return null
     }
 
+    private data class RawCoreFreq(val idx: Int, val cur: Long, val min: Long, val max: Long)
+
     private fun readAllCores(): List<CoreInfo> {
-        val raw = ArrayList<Triple<Int, Long, Long>>(coreCount)
+        val raw = ArrayList<RawCoreFreq>(coreCount)
         var maxClusterKhz = 0L
         var minClusterKhz = Long.MAX_VALUE
         for (i in 0 until coreCount) {
             val cur = readLongFile("/sys/devices/system/cpu/cpu$i/cpufreq/scaling_cur_freq")
+            val min = readLongFile("/sys/devices/system/cpu/cpu$i/cpufreq/cpuinfo_min_freq")
             val max = readLongFile("/sys/devices/system/cpu/cpu$i/cpufreq/cpuinfo_max_freq").coerceAtLeast(1L)
             if (cur > 0L) {
-                raw.add(Triple(i, cur, max))
+                raw.add(RawCoreFreq(i, cur, min, max))
                 if (max > maxClusterKhz) maxClusterKhz = max
                 if (max < minClusterKhz) minClusterKhz = max
             }
         }
-        // If direct sysfs read was blocked by SELinux, try a single batched Shizuku shell read
         if (raw.isEmpty() && ensureShell()) {
             val indices = (0 until coreCount).joinToString(" ")
             val cmd = "for i in $indices; do " +
                 "c=\$(cat /sys/devices/system/cpu/cpu\$i/cpufreq/scaling_cur_freq 2>/dev/null); " +
+                "n=\$(cat /sys/devices/system/cpu/cpu\$i/cpufreq/cpuinfo_min_freq 2>/dev/null); " +
                 "m=\$(cat /sys/devices/system/cpu/cpu\$i/cpufreq/cpuinfo_max_freq 2>/dev/null); " +
-                "[ -n \"\$c\" ] && echo \"\$i \$c \${m:-1}\"; done"
+                "[ -n \"\$c\" ] && echo \"\$i \$c \${n:-0} \${m:-1}\"; done"
             for (line in runShellCmd(cmd)) {
                 val p = line.trim().split(Regex("\\s+"))
-                if (p.size >= 3) {
+                if (p.size >= 4) {
                     val idx = p[0].toIntOrNull() ?: continue
                     val cur = p[1].toLongOrNull() ?: continue
-                    val max = (p[2].toLongOrNull() ?: 1L).coerceAtLeast(1L)
+                    val min = p[2].toLongOrNull() ?: 0L
+                    val max = (p[3].toLongOrNull() ?: 1L).coerceAtLeast(1L)
                     if (cur > 0L) {
-                        raw.add(Triple(idx, cur, max))
+                        raw.add(RawCoreFreq(idx, cur, min, max))
                         if (max > maxClusterKhz) maxClusterKhz = max
                         if (max < minClusterKhz) minClusterKhz = max
                     }
@@ -963,13 +1064,18 @@ class SystemMonitor(private val context: Context) {
             }
         }
         val hasHeterogeneous = maxClusterKhz > minClusterKhz
-        return raw.map { (idx, cur, max) ->
-            val pct = ((cur * 100L) / max).toInt().coerceIn(0, 100)
-            val isBig = if (hasHeterogeneous) max >= (maxClusterKhz * 0.95).toLong() else false
+        return raw.map { item ->
+            val span = item.max - item.min
+            val pct = if (span > 100_000L && item.min > 0L) {
+                (((item.cur - item.min).coerceAtLeast(0L) * 100L) / span).toInt().coerceIn(0, 100)
+            } else {
+                ((item.cur * 100L) / item.max).toInt().coerceIn(0, 100)
+            }
+            val isBig = if (hasHeterogeneous) item.max >= (maxClusterKhz * 0.95).toLong() else false
             CoreInfo(
-                coreIndex = idx,
-                curMhz = (cur / 1000L).toInt(),
-                maxMhz = (max / 1000L).toInt(),
+                coreIndex = item.idx,
+                curMhz = (item.cur / 1000L).toInt(),
+                maxMhz = (item.max / 1000L).toInt(),
                 loadPercent = pct,
                 isBigCore = isBig
             )
@@ -996,12 +1102,17 @@ class SystemMonitor(private val context: Context) {
         if (level >= 0 && scale > 0) cachedBattPct = ((level * 100f) / scale).roundToInt().coerceIn(0, 100)
         cachedIsCharging = (status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL)
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            cachedThermalStatus = runCatching { powerManager?.currentThermalStatus ?: 0 }.getOrDefault(0)
+        }
+
         val rawCurrent = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
         val ma = if (rawCurrent == Int.MIN_VALUE) {
             0
         } else {
             val absRaw = abs(rawCurrent.toLong())
-            if (absRaw > 10_000L) (absRaw / 1000L).toInt() else absRaw.toInt()
+            if (absRaw > 20_000L) currentInMicroAmps = true
+            if (currentInMicroAmps) (absRaw / 1000L).toInt() else absRaw.toInt()
         }
         cachedCurrentMa = ma
         val voltageV = when {
@@ -1035,6 +1146,7 @@ class SystemMonitor(private val context: Context) {
     }
 
     fun formatFloat(value: Float, decimals: Int): String {
-        return String.format(Locale.US, "%.${decimals}f", value)
+        val safe = if (value.isFinite()) value else 0f
+        return String.format(Locale.US, "%.${decimals}f", safe)
     }
 }

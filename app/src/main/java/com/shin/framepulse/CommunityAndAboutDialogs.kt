@@ -90,21 +90,26 @@ private fun detectDefaultGameName(): String {
 }
 
 suspend fun fetchLeaderboardTop(): Result<List<LeaderboardEntry>> = withContext(Dispatchers.IO) {
+    var conn: HttpURLConnection? = null
     runCatching {
         val url = URL("${ProLicenseManager.CLOUD_API_BASE.trimEnd('/')}/api/leaderboard/top")
-        val conn = (url.openConnection() as HttpURLConnection).apply {
+        val c = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 12000
             readTimeout = 12000
+            setRequestProperty("Accept", "application/json")
         }
-        val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
-        val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
+        conn = c
+        val code = c.responseCode
+        val stream = if (code in 200..299) c.inputStream else c.errorStream
+        val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        if (text.isBlank()) error("HTTP $code")
         val json = JSONObject(text)
         val arr = json.optJSONArray("entries")
         val out = mutableListOf<LeaderboardEntry>()
         if (arr != null) {
             for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
+                val o = arr.optJSONObject(i) ?: continue
                 out.add(
                     LeaderboardEntry(
                         nickname = o.optString("nickname", "Player"),
@@ -122,6 +127,8 @@ suspend fun fetchLeaderboardTop(): Result<List<LeaderboardEntry>> = withContext(
             }
         }
         out
+    }.also {
+        runCatching { conn?.disconnect() }
     }
 }
 
@@ -132,20 +139,24 @@ suspend fun submitLeaderboardScore(
     benchmark: BenchmarkSummary,
     isPro: Boolean
 ): Result<Pair<Int, List<LeaderboardEntry>>> = withContext(Dispatchers.IO) {
+    var conn: HttpURLConnection? = null
     runCatching {
         val url = URL("${ProLicenseManager.CLOUD_API_BASE.trimEnd('/')}/api/leaderboard/submit")
-        val conn = (url.openConnection() as HttpURLConnection).apply {
+        val c = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 12000
             readTimeout = 12000
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("Accept", "application/json")
         }
+        conn = c
         val deviceName = "${Build.MANUFACTURER} ${Build.MODEL}"
             .replace(Regex("[^a-zA-Z0-9 _.-]"), "")
             .trim()
             .take(24)
             .ifBlank { "Android" }
+        val cleanGame = game.replace(Regex("[^a-zA-Z0-9 _.-]"), "").trim().take(24).ifBlank { "Valorant Mobile" }
         val avgFps = benchmark.avgFps.roundToInt().coerceIn(10, 144)
         val onePctLow = benchmark.onePercentLowFps.coerceIn(1, avgFps)
         val tempC = benchmark.peakTempC.roundToInt().coerceIn(20, 65)
@@ -154,7 +165,7 @@ suspend fun submitLeaderboardScore(
         val proof = computeLeaderboardProof(
             email = email,
             device = deviceName,
-            game = game,
+            game = cleanGame,
             avgFps = avgFps,
             onePctLow = onePctLow,
             tempC = tempC,
@@ -166,7 +177,7 @@ suspend fun submitLeaderboardScore(
             .put("email", email)
             .put("nickname", nickname)
             .put("device", deviceName)
-            .put("game", game)
+            .put("game", cleanGame)
             .put("avgFps", avgFps)
             .put("onePctLow", onePctLow)
             .put("tempC", tempC)
@@ -176,10 +187,10 @@ suspend fun submitLeaderboardScore(
             .put("isPro", isPro)
             .toString()
 
-        conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
-        val code = conn.responseCode
-        val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-        val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
+        c.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+        val code = c.responseCode
+        val stream = if (code in 200..299) c.inputStream else c.errorStream
+        val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
         val json = JSONObject(text.ifBlank { "{}" })
         if (code !in 200..299 || !json.optBoolean("ok", false)) {
             error(json.optString("error", "HTTP $code"))
@@ -190,7 +201,7 @@ suspend fun submitLeaderboardScore(
         val out = mutableListOf<LeaderboardEntry>()
         if (arr != null) {
             for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
+                val o = arr.optJSONObject(i) ?: continue
                 out.add(
                     LeaderboardEntry(
                         nickname = o.optString("nickname", "Player"),
@@ -208,6 +219,8 @@ suspend fun submitLeaderboardScore(
             }
         }
         rank to out
+    }.also {
+        runCatching { conn?.disconnect() }
     }
 }
 
@@ -224,11 +237,13 @@ fun saveFlexCardToGallery(
     isPro: Boolean,
     isOwner: Boolean
 ): Boolean {
+    var bmp: Bitmap? = null
     return runCatching {
         val w = 1080
         val h = 620
-        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bmp)
+        val created = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        bmp = created
+        val canvas = Canvas(created)
 
         val bgColors = if (isOwner) {
             intArrayOf(0xFF1A0B12.toInt(), 0xFF2B1218.toInt(), 0xFF1F1708.toInt())
@@ -299,8 +314,12 @@ fun saveFlexCardToGallery(
             }
         }
         val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
-        context.contentResolver.openOutputStream(uri)?.use { out ->
-            bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+        val written = context.contentResolver.openOutputStream(uri)?.use { out ->
+            created.compress(Bitmap.CompressFormat.PNG, 100, out)
+        } ?: false
+        if (!written) {
+            runCatching { context.contentResolver.delete(uri, null, null) }
+            return false
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             values.clear()
@@ -308,6 +327,8 @@ fun saveFlexCardToGallery(
             context.contentResolver.update(uri, values, null, null)
         }
         true
+    }.also {
+        runCatching { bmp?.recycle() }
     }.getOrDefault(false)
 }
 
@@ -315,10 +336,12 @@ fun saveFlexCardToGallery(
 fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val isId = AppStrings.resolveLangCode() == "id"
     var entries by remember { mutableStateOf<List<LeaderboardEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var submitting by remember { mutableStateOf(false) }
-    var myRank by remember { mutableStateOf(0) }
+    var savingCard by remember { mutableStateOf(false) }
+    var myRank by remember { mutableIntStateOf(0) }
     var nickname by remember { mutableStateOf(if (isOwner) "Shin" else Build.MODEL.take(14)) }
     var selectedGame by remember { mutableStateOf(detectDefaultGameName()) }
 
@@ -367,7 +390,8 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
                     }
                 }
                 Text(
-                    "Anti-Cheat aktif: FPS & suhu dikunci otomatis dari hasil Benchmark Recorder.",
+                    if (isId) "Anti-Cheat aktif: FPS & suhu dikunci otomatis dari hasil Benchmark Recorder."
+                    else "Anti-Cheat active: FPS & thermals are locked directly from Benchmark Recorder sessions.",
                     color = Color(0xFF94A3B8),
                     fontSize = 11.sp
                 )
@@ -393,14 +417,18 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
                     ) {
                         Column {
                             Text(
-                                "Belum ada rekaman Benchmark valid",
+                                if (isId) "Belum ada rekaman Benchmark valid" else "No valid Benchmark recording yet",
                                 color = Color(0xFFFBBF24),
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.sp
                             )
                             Spacer(Modifier.height(3.dp))
                             Text(
-                                "Rekam sesi game minimal ${MIN_BENCHMARK_SECONDS} detik lewat Benchmark Recorder di tab Monitor agar skor terverifikasi.",
+                                if (isId) {
+                                    "Rekam sesi game minimal ${MIN_BENCHMARK_SECONDS} detik lewat Benchmark Recorder di tab Monitor agar skor terverifikasi."
+                                } else {
+                                    "Record a game session of at least ${MIN_BENCHMARK_SECONDS}s using the Benchmark Recorder in the Monitor tab."
+                                },
                                 color = Color(0xFFCBD5E1),
                                 fontSize = 11.sp,
                                 lineHeight = 15.sp
@@ -435,7 +463,7 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
                                     modifier = Modifier.height(24.dp)
                                 ) {
                                     Text(
-                                        "Sesi ${selectedSessionIdx + 1}/${validSessions.size} ↻",
+                                        "${if (isId) "Sesi" else "Run"} ${selectedSessionIdx + 1}/${validSessions.size} ↻",
                                         color = Color(0xFF38BDF8),
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold
@@ -499,10 +527,18 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
                                     .onSuccess { (rank, list) ->
                                         myRank = rank
                                         entries = list
-                                        Toast.makeText(context, "Skor terverifikasi masuk! Rank #$rank", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(
+                                            context,
+                                            if (isId) "Skor terverifikasi masuk! Rank #$rank" else "Verified score submitted! Rank #$rank",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
                                     }
                                     .onFailure { err ->
-                                        Toast.makeText(context, "Ditolak / gagal: ${err.message}", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(
+                                            context,
+                                            if (isId) "Gagal mengirim skor: ${err.message}" else "Submission failed: ${err.message}",
+                                            Toast.LENGTH_LONG
+                                        ).show()
                                     }
                                 submitting = false
                             }
@@ -510,33 +546,52 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
                     ) {
-                        Text(if (submitting) "..." else "Kirim Skor", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        Text(
+                            if (submitting) "..." else if (isId) "Kirim Skor" else "Submit Score",
+                            color = Color.Black,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
                     }
                 }
 
                 Spacer(Modifier.height(6.dp))
                 Button(
-                    enabled = activeBenchmark != null,
+                    enabled = activeBenchmark != null && !savingCard,
                     onClick = {
                         val bench = activeBenchmark ?: return@Button
-                        val ok = saveFlexCardToGallery(
-                            context = context,
-                            nickname = nickname,
-                            game = selectedGame,
-                            avgFps = bench.avgFps.roundToInt(),
-                            onePctLow = bench.onePercentLowFps,
-                            tempC = bench.peakTempC.roundToInt(),
-                            durationSec = bench.durationSec,
-                            sourceLabel = bench.sourceLabel,
-                            rank = myRank,
-                            isPro = isPro,
-                            isOwner = isOwner
-                        )
-                        Toast.makeText(
-                            context,
-                            if (ok) "Kartu Pamer disimpan ke Galeri (Pictures/FramePulse)!" else "Gagal menyimpan kartu",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        savingCard = true
+                        val nickSnap = nickname
+                        val gameSnap = selectedGame
+                        val rankSnap = myRank
+                        scope.launch {
+                            val ok = withContext(Dispatchers.IO) {
+                                saveFlexCardToGallery(
+                                    context = context,
+                                    nickname = nickSnap,
+                                    game = gameSnap,
+                                    avgFps = bench.avgFps.roundToInt(),
+                                    onePctLow = bench.onePercentLowFps,
+                                    tempC = bench.peakTempC.roundToInt(),
+                                    durationSec = bench.durationSec,
+                                    sourceLabel = bench.sourceLabel,
+                                    rank = rankSnap,
+                                    isPro = isPro,
+                                    isOwner = isOwner
+                                )
+                            }
+                            savingCard = false
+                            Toast.makeText(
+                                context,
+                                if (ok) {
+                                    if (isId) "Flex Card disimpan ke Galeri (Pictures/FramePulse)!"
+                                    else "Flex Card saved to Gallery (Pictures/FramePulse)!"
+                                } else {
+                                    if (isId) "Gagal menyimpan kartu" else "Failed to save card"
+                                },
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
                     },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp),
@@ -545,7 +600,10 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
                     )
                 ) {
                     Text(
-                        if (isOwner) "Simpan Kartu Pamer (FOUNDER GOLD)" else "Simpan Kartu Pamer (Share ke TikTok/WA)",
+                        when {
+                            isOwner -> if (isId) "Simpan Flex Card (FOUNDER GOLD)" else "Save Flex Card (FOUNDER GOLD)"
+                            else -> if (isId) "Simpan Flex Card ke Galeri (PNG)" else "Save Flex Card to Gallery (PNG)"
+                        },
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.5.sp
@@ -553,7 +611,12 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
                 }
 
                 Spacer(Modifier.height(10.dp))
-                Text("TOP RANKING GLOBAL", color = Color(0xFF34D399), fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                Text(
+                    if (isId) "TOP RANKING GLOBAL" else "GLOBAL TOP RANKINGS",
+                    color = Color(0xFF34D399),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp
+                )
                 Spacer(Modifier.height(4.dp))
 
                 if (loading) {
@@ -561,7 +624,11 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
                         CircularProgressIndicator(color = Color(0xFF34D399))
                     }
                 } else if (entries.isEmpty()) {
-                    Text("Belum ada skor. Jadilah Rank #1 pertama!", color = Color(0xFF94A3B8), fontSize = 11.5.sp)
+                    Text(
+                        if (isId) "Belum ada skor. Jadilah Rank #1 pertama!" else "No scores yet. Claim Rank #1!",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 11.5.sp
+                    )
                 } else {
                     LazyColumn(
                         modifier = Modifier.heightIn(max = 200.dp),
@@ -625,7 +692,7 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
                 }
                 Spacer(Modifier.height(6.dp))
                 TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                    Text("Tutup", color = Color(0xFF94A3B8))
+                    Text(if (isId) "Tutup" else "Close", color = Color(0xFF94A3B8))
                 }
             }
         }
@@ -635,6 +702,13 @@ fun LeaderboardDialog(email: String, isPro: Boolean, isOwner: Boolean, onDismiss
 @Composable
 fun AboutAppDialog(isOwner: Boolean, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val isId = AppStrings.resolveLangCode() == "id"
+    val appVer = remember {
+        runCatching {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.2.2"
+        }.getOrDefault("1.2.2")
+    }
     Dialog(onDismissRequest = onDismiss) {
         Card(
             shape = RoundedCornerShape(18.dp),
@@ -665,7 +739,7 @@ fun AboutAppDialog(isOwner: Boolean, onDismiss: () -> Unit) {
                     Text("FP", color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
                 }
                 Spacer(Modifier.height(10.dp))
-                Text("FramePulse Pro", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                Text("FramePulse v$appVer", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
                 if (isOwner) {
                     Spacer(Modifier.height(4.dp))
                     Box(
@@ -689,9 +763,9 @@ fun AboutAppDialog(isOwner: Boolean, onDismiss: () -> Unit) {
                         .padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text("Owner & Developer: Shin (hinaaaq)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text("Developer: Shin (hinaaaq)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     Text("Device: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})", color = Color(0xFFCBD5E1), fontSize = 11.sp)
-                    Text("Engine: Shizuku Shell • Midtrans QRIS • ECDSA", color = Color(0xFF94A3B8), fontSize = 11.sp)
+                    Text("Engine: SurfaceFlinger • Shizuku • ECDSA P-256", color = Color(0xFF94A3B8), fontSize = 11.sp)
                 }
 
                 Spacer(Modifier.height(12.dp))
@@ -701,18 +775,27 @@ fun AboutAppDialog(isOwner: Boolean, onDismiss: () -> Unit) {
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/hinaaaq/FramePulse"))
                             context.startActivity(intent)
                         }.onFailure {
-                            Toast.makeText(context, "Gagal membuka browser", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(
+                                context,
+                                if (isId) "Gagal membuka browser" else "Failed to open browser",
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(11.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
                 ) {
-                    Text("Buka GitHub Owner (hinaaaq/FramePulse)", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text(
+                        if (isId) "Buka Repository GitHub (hinaaaq/FramePulse)" else "Open GitHub Repository (hinaaaq/FramePulse)",
+                        color = Color.Black,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
                 }
                 Spacer(Modifier.height(6.dp))
                 TextButton(onClick = onDismiss) {
-                    Text("Tutup", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                    Text(if (isId) "Tutup" else "Close", color = Color(0xFF94A3B8), fontSize = 12.sp)
                 }
             }
         }

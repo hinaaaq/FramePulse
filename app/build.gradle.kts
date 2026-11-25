@@ -30,6 +30,10 @@ android {
     buildTypes {
         getByName("release") {
             isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             val ksPath = System.getenv("KEYSTORE_FILE")
             if (!ksPath.isNullOrBlank() && file(ksPath).exists()) {
                 signingConfig = signingConfigs.getByName("release")

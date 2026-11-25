@@ -17,6 +17,7 @@ import java.security.spec.X509EncodedKeySpec
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import java.util.TimeZone
 
 enum class LicenseState {
     FREE,
@@ -44,12 +45,11 @@ data class ProPlanOption(
 
 object ProLicenseManager {
 
-    // Ganti 3 URL di bawah dengan URL asli milikmu setelah setup Tako, Gumroad, dan Cloudflare Worker gratis
     const val CLOUD_API_BASE = "https://framepulse-api.senoyasin726.workers.dev"
     const val DONATE_URL_ID = "https://tako.id/Lazyperson"
     const val DONATE_URL_GLOBAL = ""
 
-    // Public Key ECDSA P-256 (Aman untuk repo GitHub public — tidak bisa dipakai membuat kunci)
+    // ECDSA P-256 Public Key (SPKI) — safe for public repositories (verification only)
     private const val PUBLIC_KEY_SPKI_B64 =
         "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYJliXvlThDik1RmOd8rYtbix18UCXEVTBzrsxnYZMOAvvkhBHJgqS9h+Nn+fvg4SaPDbVdrVpkKMd5zoHi5sEQ=="
 
@@ -70,7 +70,7 @@ object ProLicenseManager {
     fun isOwnerEmail(email: String): Boolean {
         val clean = email.trim().lowercase(Locale.US)
         if (clean.isBlank()) return false
-        val digest = MessageDigest.getInstance("SHA-256").digest("fp-owner:$clean".toByteArray())
+        val digest = MessageDigest.getInstance("SHA-256").digest("fp-owner:$clean".toByteArray(Charsets.UTF_8))
         val hex = digest.joinToString("") { "%02x".format(it) }
         return hex in OWNER_EMAIL_HASHES
     }
@@ -127,8 +127,9 @@ object ProLicenseManager {
         }
 
         if (trialStart > 0L) {
-            val elapsed = System.currentTimeMillis() - trialStart
-            if (elapsed in 0L until TRIAL_DURATION_MS) {
+            val nowMs = System.currentTimeMillis()
+            val elapsed = (nowMs - trialStart).coerceAtLeast(0L)
+            if (elapsed < TRIAL_DURATION_MS) {
                 val remHours = ((TRIAL_DURATION_MS - elapsed) / (60L * 60L * 1000L)).coerceAtLeast(1L)
                 val label = if (remHours >= 24L) "${remHours / 24L}d ${remHours % 24L}h" else "${remHours}h"
                 return ProStatus(LicenseState.TRIAL_ACTIVE, true, label, "TRIAL", false)
@@ -182,11 +183,12 @@ object ProLicenseManager {
         } catch (_: Throwable) {
             "unknown"
         }
-        val digest = MessageDigest.getInstance("SHA-256").digest("fp-dev-$raw".toByteArray())
+        val digest = MessageDigest.getInstance("SHA-256").digest("fp-dev-$raw".toByteArray(Charsets.UTF_8))
         return digest.take(8).joinToString("") { "%02x".format(it) }
     }
 
     fun buildGlobalCheckoutUrl(email: String): String {
+        if (DONATE_URL_GLOBAL.isBlank()) return ""
         val cleanEmail = email.trim()
         if (cleanEmail.isBlank()) return DONATE_URL_GLOBAL
         val sep = if (DONATE_URL_GLOBAL.contains("?")) "&" else "?"
@@ -214,7 +216,7 @@ object ProLicenseManager {
                 connectTimeout = 8000
                 readTimeout = 8000
                 setRequestProperty("Accept", "application/json")
-                setRequestProperty("User-Agent", "FramePulse-Android/1.0")
+                setRequestProperty("User-Agent", "FramePulse-Android/1.2")
             }
 
             val code = conn.responseCode
@@ -306,14 +308,20 @@ object ProLicenseManager {
     }
 
     private fun currentYyyyMmDd(): Int {
-        val cal = Calendar.getInstance()
+        val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
         return cal.get(Calendar.YEAR) * 10000 + (cal.get(Calendar.MONTH) + 1) * 100 + cal.get(Calendar.DAY_OF_MONTH)
     }
 
     private fun formatYmd(ymd: Int): String {
         return try {
-            val parsed = SimpleDateFormat("yyyyMMdd", Locale.US).parse(ymd.toString())
-            if (parsed != null) SimpleDateFormat("dd MMM yyyy", Locale.US).format(parsed) else ymd.toString()
+            val utc = TimeZone.getTimeZone("UTC")
+            val parser = SimpleDateFormat("yyyyMMdd", Locale.US).apply { timeZone = utc }
+            val parsed = parser.parse(ymd.toString())
+            if (parsed != null) {
+                SimpleDateFormat("dd MMM yyyy", Locale.US).apply { timeZone = utc }.format(parsed)
+            } else {
+                ymd.toString()
+            }
         } catch (_: Throwable) {
             ymd.toString()
         }

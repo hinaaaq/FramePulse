@@ -40,20 +40,30 @@ class FramePulseTileService : TileService() {
         }
 
         if (OverlayService.isRunning) {
-            startService(Intent(this, OverlayService::class.java).apply {
-                action = OverlayService.ACTION_STOP
-            })
+            if (OverlayService.isTouchLocked) {
+                // Convenient 1-tap unlock from Quick Settings if notification permission was denied!
+                runCatching {
+                    startService(Intent(this, OverlayService::class.java).apply {
+                        action = OverlayService.ACTION_TOGGLE_LOCK
+                    })
+                }
+                return
+            }
+            stopService(Intent(this, OverlayService::class.java))
             qsTile?.state = Tile.STATE_INACTIVE
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 qsTile?.subtitle = str.tileOff
             }
         } else {
-            ContextCompat.startForegroundService(this, Intent(this, OverlayService::class.java).apply {
-                action = OverlayService.ACTION_START
-            })
-            qsTile?.state = Tile.STATE_ACTIVE
+            val started = runCatching {
+                ContextCompat.startForegroundService(this, Intent(this, OverlayService::class.java).apply {
+                    action = OverlayService.ACTION_START
+                })
+                true
+            }.getOrDefault(false)
+            qsTile?.state = if (started) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                qsTile?.subtitle = str.tileActive
+                qsTile?.subtitle = if (started) str.tileActive else str.tileOff
             }
         }
         qsTile?.updateTile()

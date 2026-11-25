@@ -1,11 +1,6 @@
 package com.shin.framepulse
 
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import rikka.shizuku.Shizuku
-import java.io.BufferedReader
-import java.io.InputStreamReader
 
 object ShizukuPerformanceTweaks {
 
@@ -21,103 +16,86 @@ object ShizukuPerformanceTweaks {
         "com.android.chrome"
     )
 
-    private fun isId(): Boolean =
-        Prefs.hasChosenLanguage && Prefs.appLanguage.equals("id", ignoreCase = true)
+    private fun isId(): Boolean = AppStrings.resolveLangCode() == "id"
 
-    fun isShizukuReady(): Boolean =
-        runCatching { Shizuku.pingBinder() }.getOrDefault(false)
+    fun isShizukuReady(): Boolean = ShizukuShell.isReady()
 
-    fun openShizuku(context: Context): String {
-        val launchIntent = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
-        return if (launchIntent != null) {
-            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            runCatching { context.startActivity(launchIntent) }
-            if (isId()) "Shizuku belum aktif — membuka aplikasi Shizuku..." else "Shizuku not active — opening Shizuku app..."
-        } else {
-            val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/")).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            runCatching { context.startActivity(webIntent) }
-            if (isId()) "Shizuku belum terpasang — membuka halaman unduh..." else "Shizuku not installed — opening download page..."
-        }
-    }
-
-    private fun runShizukuShell(command: String): Pair<Boolean, String> {
-        return runCatching {
-            if (!Shizuku.pingBinder()) {
-                return Pair(false, if (isId()) "Shizuku belum aktif" else "Shizuku is not active")
-            }
-            val method = Shizuku::class.java.getDeclaredMethod(
-                "newProcess",
-                Array<String>::class.java,
-                Array<String>::class.java,
-                String::class.java
-            )
-            method.isAccessible = true
-            val proc = method.invoke(
-                null,
-                arrayOf("sh", "-c", command),
-                null,
-                null
-            ) as Process
-            val out = BufferedReader(InputStreamReader(proc.inputStream)).use { it.readText() }
-            val err = BufferedReader(InputStreamReader(proc.errorStream)).use { it.readText() }
-            val code = proc.waitFor()
-            val combined = (out + "\n" + err).trim()
-            Pair(code == 0, combined)
-        }.getOrElse { e ->
-            Pair(false, e.message ?: if (isId()) "Gagal menjalankan perintah Shizuku" else "Failed to run Shizuku command")
-        }
-    }
+    fun openShizuku(context: Context): String =
+        ShizukuShell.ensureReadyOrPrompt(context) ?: ShizukuShell.openShizukuApp(context, notRunning = false)
 
     fun applySmartStandbyBucket(excludePkg: String?): String {
-        var affected = 0
-        for (pkg in heavyBackgroundApps) {
-            if (pkg == excludePkg) continue
-            val (ok, _) = runShizukuShell("am set-standby-bucket $pkg restricted")
-            if (ok) affected++
+        if (!isShizukuReady()) {
+            return if (isId()) "Pastikan Shizuku aktif & diizinkan untuk Smart Standby" else "Ensure Shizuku is active & permitted for Smart Standby"
         }
-        return if (affected > 0) {
-            if (isId()) "Smart Standby aktif ($affected app latar belakang dibatasi)"
-            else "Smart Standby active ($affected background apps restricted)"
-        } else {
-            if (isId()) "Pastikan Shizuku aktif untuk Smart Standby Bucket"
-            else "Ensure Shizuku is active for Smart Standby Bucket"
+        val safeExclude = ShizukuShell.sanitizePackage(excludePkg)
+        val targets = heavyBackgroundApps.filter { it != safeExclude }
+        val script = buildString {
+            append("count=0; ")
+            for (pkg in targets) {
+                append("if pm path '").append(pkg).append("' >/dev/null 2>&1 && am set-standby-bucket '")
+                    .append(pkg).append("' restricted >/dev/null 2>&1; then count=$((count+1)); fi; ")
+            }
+            append("echo \"\$count\"")
+        }
+        val (ok, out) = ShizukuShell.exec(script, timeoutMs = 15_000L)
+        val affected = out.lines().lastOrNull()?.trim()?.toIntOrNull() ?: 0
+        return when {
+            ok && affected > 0 -> {
+                if (isId()) "Smart Standby aktif ($affected app latar belakang dibatasi)"
+                else "Smart Standby active ($affected background apps restricted)"
+            }
+            ok -> {
+                if (isId()) "Smart Standby selesai (tidak ada app berat yang terpasang)"
+                else "Smart Standby complete (no listed heavy apps installed)"
+            }
+            else -> {
+                if (isId()) "Pastikan Shizuku aktif untuk Smart Standby Bucket"
+                else "Ensure Shizuku is active for Smart Standby Bucket"
+            }
         }
     }
 
     fun restoreStandbyBuckets(): String {
-        var restored = 0
-        for (pkg in heavyBackgroundApps) {
-            val (ok, _) = runShizukuShell("am set-standby-bucket $pkg active")
-            if (ok) restored++
+        if (!isShizukuReady()) {
+            return if (isId()) "Shizuku belum aktif" else "Shizuku is not active"
         }
-        return if (restored > 0) {
+        val script = buildString {
+            append("count=0; ")
+            for (pkg in heavyBackgroundApps) {
+                append("if pm path '").append(pkg).append("' >/dev/null 2>&1 && am set-standby-bucket '")
+                    .append(pkg).append("' active >/dev/null 2>&1; then count=$((count+1)); fi; ")
+            }
+            append("echo \"\$count\"")
+        }
+        val (ok, out) = ShizukuShell.exec(script, timeoutMs = 15_000L)
+        val restored = out.lines().lastOrNull()?.trim()?.toIntOrNull() ?: 0
+        return if (ok) {
             if (isId()) "Standby Bucket dipulihkan ($restored app)"
             else "Standby Buckets restored ($restored apps)"
         } else {
-            if (isId()) "Gagal memulihkan (cek Shizuku)" else "Failed to restore (check Shizuku)"
+            if (isId()) "Gagal memulihkan Standby Bucket (cek Shizuku)" else "Failed to restore Standby Buckets (check Shizuku)"
         }
     }
 
     fun applyRefreshRateLock(hz: Int): String {
-        val cmd = if (hz <= 0) {
-            "settings delete system min_refresh_rate; settings delete system peak_refresh_rate"
+        val safeHz = hz.coerceIn(0, 240)
+        val cmd = if (safeHz <= 0) {
+            "settings delete system min_refresh_rate >/dev/null 2>&1; settings delete system peak_refresh_rate >/dev/null 2>&1; true"
         } else {
-            "settings put system min_refresh_rate $hz.0 && settings put system peak_refresh_rate $hz.0"
+            "settings put system min_refresh_rate $safeHz.0 && settings put system peak_refresh_rate $safeHz.0"
         }
-        val (ok, err) = runShizukuShell(cmd)
+        val (ok, err) = ShizukuShell.exec(cmd)
         return if (ok) {
-            Prefs.lockedRefreshRateHz = hz
-            if (hz <= 0) {
+            Prefs.lockedRefreshRateHz = safeHz
+            if (safeHz <= 0) {
                 if (isId()) "Refresh Rate dikembalikan ke Auto" else "Refresh Rate reset to Auto"
             } else {
-                if (isId()) "Refresh Rate dikunci ke ${hz}Hz" else "Refresh Rate locked to ${hz}Hz"
+                if (isId()) "Refresh Rate dikunci ke ${safeHz}Hz" else "Refresh Rate locked to ${safeHz}Hz"
             }
         } else {
             val fallback = if (isId()) "Cek izin Shizuku" else "Check Shizuku permission"
-            if (isId()) "Gagal atur Refresh Rate: ${err.ifBlank { fallback }}"
-            else "Failed to set Refresh Rate: ${err.ifBlank { fallback }}"
+            if (isId()) "Gagal atur Refresh Rate: ${err.ifBlank { fallback }.take(80)}"
+            else "Failed to set Refresh Rate: ${err.ifBlank { fallback }.take(80)}"
         }
     }
 
@@ -128,7 +106,7 @@ object ShizukuPerformanceTweaks {
             "settings put global window_animation_scale $scale && " +
             "settings put global transition_animation_scale $scale && " +
             "settings put global animator_duration_scale $scale"
-        val (ok, err) = runShizukuShell(cmd)
+        val (ok, err) = ShizukuShell.exec(cmd)
         return if (ok) {
             Prefs.gamingVisualMode = enabled
             if (enabled) {
@@ -140,26 +118,33 @@ object ShizukuPerformanceTweaks {
             }
         } else {
             val fallback = if (isId()) "Cek izin Shizuku" else "Check Shizuku permission"
-            if (isId()) "Gagal ubah Visual Mode: ${err.ifBlank { fallback }}"
-            else "Failed to change Visual Mode: ${err.ifBlank { fallback }}"
+            if (isId()) "Gagal ubah Visual Mode: ${err.ifBlank { fallback }.take(80)}"
+            else "Failed to change Visual Mode: ${err.ifBlank { fallback }.take(80)}"
         }
     }
 
     fun runDeepArtCompileAndTrim(targetPkg: String): String {
-        if (targetPkg.isBlank() || targetPkg == "com.shin.framepulse") {
+        if (!isShizukuReady()) {
+            return if (isId()) "Shizuku belum aktif atau izin belum diberikan" else "Shizuku is not active or permission not granted"
+        }
+        val safePkg = ShizukuShell.sanitizePackage(targetPkg)
+        if (safePkg.isBlank() || safePkg == "com.shin.framepulse") {
             return if (isId()) "Buka game dulu sekali agar package terdeteksi"
             else "Open your game once first so its package is detected"
         }
-        val (okTrim, _) = runShizukuShell("pm trim-caches 512M")
-        val (okArt, err) = runShizukuShell("cmd package compile -m speed -f $targetPkg")
-        return if (okArt) {
+        val (okTrim, _) = ShizukuShell.exec("pm trim-caches 512M", timeoutMs = 15_000L)
+        val (okArt, err) = ShizukuShell.exec(
+            "cmd package compile -m speed -f '$safePkg'",
+            timeoutMs = 90_000L
+        )
+        return if (okArt && !err.contains("Failure", ignoreCase = true)) {
             val trimNote = if (okTrim) (if (isId()) " + Cache bersih" else " + Cache trimmed") else ""
-            if (isId()) "Deep ART (speed) selesai untuk $targetPkg$trimNote"
-            else "Deep ART (speed) finished for $targetPkg$trimNote"
+            if (isId()) "Deep ART (speed) selesai untuk $safePkg$trimNote"
+            else "Deep ART (speed) finished for $safePkg$trimNote"
         } else {
             val fallback = if (isId()) "Cek izin Shizuku" else "Check Shizuku permission"
-            if (isId()) "Deep ART gagal: ${err.ifBlank { fallback }}"
-            else "Deep ART failed: ${err.ifBlank { fallback }}"
+            if (isId()) "Deep ART gagal: ${err.ifBlank { fallback }.take(80)}"
+            else "Deep ART failed: ${err.ifBlank { fallback }.take(80)}"
         }
     }
 
