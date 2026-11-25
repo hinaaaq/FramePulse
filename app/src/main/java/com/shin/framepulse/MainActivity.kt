@@ -1775,6 +1775,10 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                                             Prefs.appLanguage = code
                                             pushOverlayUpdate()
                                         }
+                            }
+                        }
+                    }
+                    // LANG_LOOP_CLOSED_FIX
                 // SHIZUKU_VERTICAL_COLUMN_START
                 Column(modifier = Modifier.fillMaxWidth()) {
                 Spacer(modifier = Modifier.height(12.dp))
@@ -1909,10 +1913,8 @@ fun FramePulseProApp(onRequestNotif: () -> Unit) {
                         .padding(vertical = 6.dp)
                 )
                 } // SHIZUKU_VERTICAL_COLUMN_END
-                                    }
-                                }
-                            }
-                        }
+                // FIX_EXTRA_BRACES_1912_1915
+                }
                     }
 
                     item {
